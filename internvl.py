@@ -671,3 +671,41 @@ class CustomQwenVLCaptionModel:
         
         # Fallback nếu model trả về text thường
         return [line.strip("- ") for line in response.split('\n') if '?' in line][:5]
+    
+    @torch.no_grad()
+    def generate_answers(self, image_path, prompt, max_new_tokens=1000):
+        image = Image.open(image_path).convert("RGB")
+        messages = [
+            {
+                "role": "system",
+                "content": "Bạn là chuyên gia văn hóa. Trả lời danh sách câu hỏi dưới dạng JSON Array. Không giải thích thêm."
+            },
+            {
+                "role": "user", 
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": prompt}
+                ]
+            }
+        ]
+
+        text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        inputs = self.processor(text=[text], images=[image], return_tensors="pt").to(self.device)
+
+        output_ids = self.model.generate(
+            **inputs,
+            generation_config=GenerationConfig(
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                temperature=0.0,
+                eos_token_id=self.processor.tokenizer.eos_token_id,
+            )
+        )
+
+        response = self.processor.batch_decode(
+            output_ids[:, inputs.input_ids.shape[1]:], 
+            skip_special_tokens=True
+        )[0].strip()
+
+        # Sử dụng lại hàm extract_json_array có sẵn của bạn
+        return self.extract_json_array(response)

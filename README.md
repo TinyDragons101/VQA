@@ -41,10 +41,12 @@ The format of image_vqa.json
         {
             "question": ...,
             "answer": ...,
+            "explanation": ...,
         },
         {
             "question": ...,
-            "answer": ...,
+            "answer": ..., 
+            "explanation": ...,
         },
         {
             ...
