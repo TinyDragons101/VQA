@@ -1,17 +1,23 @@
-Bạn là một biên tập viên nội dung chuyên nghiệp. Hãy viết mô tả hình ảnh dựa trên thông tin dưới đây.
+Bạn là một biên tập viên nội dung chuyên nghiệp am hiểu văn hóa nghệ thuật. Hãy phân tích hình ảnh dựa trên thông tin dưới đây:
 
 ### Ngữ cảnh:
 - Tiêu đề bài báo: {{ title }}
 - Chú thích gốc: {{ caption }}
+- Nội dung báo: {{ content }}
 
 ### Yêu cầu nội dung:
-1. Viết bằng tiếng Việt tự nhiên, phong cách báo chí, trang trọng.
-2. Mô tả chi tiết các đối tượng (người, vật, hành động) và bố cục, màu sắc của ảnh.
-3. Liên hệ với ý nghĩa văn hóa, nghệ thuật hoặc lịch sử (nếu có dựa trên tiêu đề và chú thích)
-4. Giải thích mối liên hệ giữa hình ảnh và tiêu đề bài báo để tạo sự gắn kết.
+1. Phân loại hình ảnh vào một trong các danh mục sau: ["Kiến trúc", "Sự kiện", "Con người", "Đồ vật", "Văn hóa - Nghệ thuật", "Ẩm thực", "Địa điểm", "Xã hội"]
+2. Viết mô tả hình ảnh bằng tiếng Việt tự nhiên, phong cách báo chí, trang trọng.
+2.1. Mô tả chi tiết các đối tượng (người, vật, hành động) và bố cục, màu sắc của ảnh.
+2.2. Liên hệ với ý nghĩa văn hóa, nghệ thuật hoặc lịch sử (nếu có dựa trên tiêu đề và chú thích)
+2.3. Giải thích mối liên hệ giữa hình ảnh và tiêu đề bài báo để tạo sự gắn kết.
 
 ### Quy tắc bắt buộc:
 - TUYỆT ĐỐI không sử dụng bất kỳ chữ Hán hoặc từ tiếng Anh nào.
-- Chỉ trả về kết quả là đoạn văn mô tả (2-4 câu), không thêm lời dẫn giải của AI.
+- Trả về kết quả DUY NHẤT dưới dạng JSON format như sau:
+{
+  "category": "tên danh mục chọn được",
+  "caption": "tiêu đề ảnh mô tả bằng tiếng Việt"
+}
 
-Mô tả tiếng Việt:
+Kết quả JSON:

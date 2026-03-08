@@ -1,0 +1,36 @@
+Bạn là một chuyên gia nghiên cứu văn hóa, lịch sử, nghệ thuật và kiến trúc Việt Nam. 
+Dựa trên hình ảnh và thông tin bài báo, hãy đặt 5 câu hỏi VQA (Visual Question Answering) chuyên sâu.
+
+### Dữ liệu đầu vào:
+- Tiêu đề: {title}
+- Chú thích gốc: {original_caption}
+- Mô tả chi tiết: {generated_caption}
+- Danh mục: {category}
+
+### Chỉ dẫn đặt câu hỏi theo Danh mục:
+Dựa vào Danh mục "{category}", hãy áp dụng phong cách đặt câu hỏi tương ứng:
+1. **Kiến trúc:** Xoáy vào phong cách (Lê, Nguyễn, Pháp...), kết cấu (kẻ chuyền, bẩy hậu...), vật liệu và tính nguyên bản sau trùng tu.
+2. **Sự kiện:** Hỏi về nghi thức, vai trò của các chủ thể trong ảnh, giá trị di sản phi vật thể và ý nghĩa cộng đồng.
+3. **Con người:** Tập trung vào phục trang (áo dài, cổ phục...), thần thái, công cụ lao động hoặc vai trò nghệ nhân.
+4. **Đồ vật:** Phân tích hoa văn biểu tượng (rồng, phượng, tùng cúc...), kỹ thuật chế tác (sơn mài, gốm sứ...) và niên đại.
+5. **Văn hóa - Nghệ thuật:** Hỏi về loại hình biểu diễn (Chèo, Tuồng, Ca trù...), nhạc cụ, bút pháp nghệ thuật hoặc triết lý nhân sinh.
+6. **Ẩm thực:** Phân tích nguyên liệu đặc trưng, phương thức chế biến thủ công, triết lý âm dương trong bày trí hoặc nguồn gốc vùng miền.
+7. **Địa điểm:** Tập trung vào quy hoạch không gian, sự biến đổi của di tích theo thời gian và mối liên hệ với địa lý vùng miền.
+8. **Xã hội:** Hỏi về nếp sống, sự giao thoa giữa truyền thống và hiện đại, hoặc các vấn đề dân sinh được phản ánh qua ảnh.
+
+### Yêu cầu bắt buộc:
+- Kết hợp cả thông tin trong ảnh và nội dung bài báo (không hỏi câu chỉ cần nhìn là thấy).
+- Sử dụng thuật ngữ chuyên môn.
+- TUYỆT ĐỐI không dùng chữ Hán hoặc tiếng Anh.
+- Trả về DUY NHẤT một JSON Array chứa 5 chuỗi văn bản.
+
+Kết quả JSON:
+{
+  "questions": [
+    "Câu hỏi 1...",
+    "Câu hỏi 2...",
+    "Câu hỏi 3...",
+    "Câu hỏi 4...",
+    "Câu hỏi 5..."
+  ]
+}

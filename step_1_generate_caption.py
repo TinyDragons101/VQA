@@ -5,16 +5,16 @@ import torch
 import sys
 from tqdm import tqdm
 from jinja2 import Environment, FileSystemLoader
-from internvl import CustonInternVLCaptionModel, CustomQwenVLCaptionModel
+from internvl import CustonInternVLCaptionModel, CustomQwenVLCaptionModel, CustomInternVLCaptionModel14B
 
-def render_caption_prompt(template_dir, title, caption):
+def render_caption_prompt(template_dir, title, caption, content):
     env = Environment(
         loader=FileSystemLoader(template_dir),
         trim_blocks=True,
         lstrip_blocks=True
     )
     template = env.get_template("caption_generating.j2")
-    return template.render(title=title, caption=caption)
+    return template.render(title=title, caption=caption, content=content)
 
 def save_json(data, path):
     os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
@@ -38,8 +38,7 @@ def process_pipeline(args):
     model = None
     if args.generate_caption:
         print(f"[*] Initializing InternVL on {args.device}...")
-        # model = CustonInternVLCaptionModel(model_name="OpenGVLab/InternVL2_5-8B", device=args.device)
-        model = CustomQwenVLCaptionModel(model_name="Qwen/Qwen2.5-VL-7B-Instruct", device=args.device)
+        model = CustomQwenVLCaptionModel(model_name=args.model_name, device=args.device)
 
     updated_count = 0
     try:
@@ -62,22 +61,24 @@ def process_pipeline(args):
                 entry = {
                     "article_id": article_id,
                     "title": title,
+                    "category": "",
                     "original_caption": img.get("caption", ""),
                     "generated_caption": ""
                 }
 
                 if args.generate_caption and model and os.path.exists(image_path):
                     try:
-                        prompt = render_caption_prompt(args.template_dir, title, entry["original_caption"])
+                        prompt = render_caption_prompt(args.template_dir, title, entry["original_caption"], content)
                         
-                        response = model.generate_caption(
+                        response = model.generate_caption_and_category(
                             image_path, 
                             prompt=prompt, 
-                            max_new_tokens=200, 
+                            max_new_tokens=300, 
                             do_sample=True
                         )
                         
-                        entry["generated_caption"] = response
+                        entry["generated_caption"] = response["caption"]
+                        entry["category"] = response["category"]
                         updated_count += 1
                         
                         # Memory Cleanup
@@ -105,8 +106,9 @@ def main():
     parser.add_argument("--output_path", type=str, default="./image_caption.json")
     parser.add_argument("--image_dir", type=str, default="./images")
     parser.add_argument("--template_dir", type=str, default="./prompt_templates")
-    parser.add_argument("--generate_caption", action="store_true")
-    parser.add_argument("--device", type=str, default="cuda:4")
+    parser.add_argument("--generate_caption", action="store_true", default=True)
+    parser.add_argument("--model_name", type=str, default="Qwen/Qwen3-VL-8B-Instruct")
+    parser.add_argument("--device", type=str, default="cuda:0")
     process_pipeline(parser.parse_args())
 
 if __name__ == "__main__":

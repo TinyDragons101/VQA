@@ -8,20 +8,24 @@ from conversation import get_conv_template
 from typing import List, Optional, Tuple, Union
 from transformers import (AutoModel, GenerationConfig, LlamaForCausalLM,
                           LlamaTokenizer, Qwen2ForCausalLM)
-from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+from transformers import Qwen2_5_VLForConditionalGeneration, Qwen3VLForConditionalGeneration, AutoProcessor
 from qwen_vl_utils import process_vision_info
 import torch.nn as nn
+import json
+import re
 
 
-class CustonInternVLRetrievalModel():
+class CustomInternVLCaptionModel14B():
     def __init__(self, model_name = "OpenGVLab/InternVL-14B-224px" , device='cuda:7'):
         
         self.device = torch.device(device)
         self.model = AutoModel.from_pretrained(
             model_name,
             torch_dtype=torch.bfloat16,
-            low_cpu_mem_usage=True,
-            trust_remote_code=True).to(self.device).eval()
+            low_cpu_mem_usage=False,
+            trust_remote_code=True,
+            device_map=None
+        ).to(self.device).eval()
 
         self.image_processor = CLIPImageProcessor.from_pretrained(
             model_name, trust_remote_code=True)
@@ -63,7 +67,6 @@ class CustonInternVLRetrievalModel():
                 probs = probs
             return probs
     
-   
     
     def compute_text_text_probs(self, text1, text2, soft_max = True):
         with torch.no_grad():
@@ -79,8 +82,6 @@ class CustonInternVLRetrievalModel():
                 probs = probs
             return probs
         
-    
-    
     
     def crop_center(self, image, crop_width, crop_height):
         width, height = image.size
@@ -486,37 +487,139 @@ class CustonInternVLCaptionModel():
 class CustomQwenVLCaptionModel:
     def __init__(
         self,
-        model_name="Qwen/Qwen2.5-VL-7B-Instruct",
+        # model_name="Qwen/Qwen2.5-VL-7B-Instruct",
+        model_name="Qwen/Qwen3-VL-8B-Instruct",
         device="cuda:0"
     ):
         self.device = torch.device(device)
 
         # Load model
-        self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+        # self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+        #     model_name,
+        #     torch_dtype=torch.bfloat16,
+        #     # load_in_4bit=True,
+        #     device_map=device,
+        #     trust_remote_code=True
+        # ).eval()
+        
+        self.model = Qwen3VLForConditionalGeneration.from_pretrained(
             model_name,
             torch_dtype=torch.bfloat16,
-            device_map=None
-        ).to(self.device).eval()
+            device_map=device,
+            trust_remote_code=True,
+            local_files_only=True
+        ).eval()
 
-        # Processor handles BOTH tokenizer + image processor
-        self.processor = AutoProcessor.from_pretrained(model_name)
+        # 2. Processor tự động nhận diện template của Qwen3
+        self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
 
-        print("✅ Qwen2.5-VL loaded successfully")
+        print(f"✅ {model_name} loaded successfully on {device}")
+        
+    def extract_json_array(self, text):
+        try:
+            # Làm sạch text trước khi parse
+            text = text.strip()
+            if "```json" in text:
+                text = text.split("```json")[-1].split("```")[0].strip()
+            
+            return json.loads(text)
+        except:
+            matches = re.findall(r'\[.*?\]', text, re.DOTALL)
+            for m in matches:
+                try:
+                    return json.loads(m)
+                except:
+                    continue
+        return None
 
     @torch.no_grad()
-    def generate_caption(
+    def generate_caption_and_category(
         self,
         image_path,
-        prompt="Describe the image in detail in Vietnamese.",
-        max_new_tokens=200,
-        do_sample=False
+        prompt="Mô tả chi tiết hình ảnh văn hóa nghệ thuật này bằng tiếng Việt.",
+        max_new_tokens=300,
+        do_sample=True
+    ):
+        image = Image.open(image_path).convert("RGB")
+
+        # Qwen3 tối ưu tốt hơn với system prompt rõ ràng về style
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Bạn là một biên tập viên nội dung chuyên nghiệp, chuyên phân tích văn hóa và nghệ thuật Việt Nam. "
+                    "Hãy mô tả hình ảnh một cách sâu sắc, giàu tính nghệ thuật và phân loại hoàn toàn bằng tiếng Việt dựa trên nội dung dưới đây."
+                )
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ]
+
+        # Chuẩn bị input theo chuẩn chat template mới
+        text = self.processor.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+
+        # Xử lý ảnh: Qwen3 hỗ trợ dynamic resolution tốt hơn
+        inputs = self.processor(
+            text=[text],
+            images=[image],
+            padding=True,
+            return_tensors="pt"
+        ).to(self.device)
+
+        gen_config = GenerationConfig(
+            max_new_tokens=max_new_tokens,
+            do_sample=do_sample,
+            temperature=0.7, 
+            top_p=0.9,
+            repetition_penalty=1.1,
+            eos_token_id=self.processor.tokenizer.eos_token_id,
+            pad_token_id=self.processor.tokenizer.pad_token_id,
+        )
+
+        output_ids = self.model.generate(
+            **inputs,
+            generation_config=gen_config
+        )
+
+        # Tách phần trả về từ output
+        generated_ids = [
+            output_ids[len(input_ids):] for input_ids, output_ids in zip(inputs.input_ids, output_ids)
+        ]
+        response = self.processor.batch_decode(
+            generated_ids,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=True
+        )[0]
+
+        return self.extract_json_array(response)
+    
+    @torch.no_grad()
+    def generate_questions(
+        self,
+        image_path,
+        prompt="Dựa trên hình ảnh, hãy tạo 5 câu hỏi về các chi tiết nghệ thuật và văn hóa.",
+        max_new_tokens=400
     ):
         image = Image.open(image_path).convert("RGB")
 
         messages = [
             {
                 "role": "system",
-                "content": "Bạn là trợ lý ngôn ngữ tiếng Việt chuyên nghiệp. Nhiệm vụ của bạn là mô tả hình ảnh một cách sinh động, chính xác và hoàn toàn bằng tiếng Việt."
+                "content": (
+                    "Bạn là một chuyên gia nghiên cứu văn hóa, lịch sử, nghệ thuật và kiến trúc Việt Nam."
+                    "Dựa trên hình ảnh và thông tin bài báo, hãy đặt 5 câu hỏi VQA (Visual Question Answering) chuyên sâu."
+                    "CHỈ trả về một JSON Array (ví dụ: [\"câu 1\", \"câu 2\"]). "
+                    "Không có văn bản thừa ngoài JSON."
+                )
             },
             {
                 "role": "user",
@@ -534,17 +637,15 @@ class CustomQwenVLCaptionModel:
         )
 
         inputs = self.processor(
-            text=text,
-            images=image,
+            text=[text],
+            images=[image],
             return_tensors="pt"
         ).to(self.device)
 
         gen_config = GenerationConfig(
             max_new_tokens=max_new_tokens,
-            do_sample=do_sample,
-            temperature=0.7, 
-            top_p=0.9, # Giúp loại bỏ các token xác suất thấp (như tiếng lạ)
-            repetition_penalty=1.1, # Giảm xuống 1.1 để tránh câu văn bị gãy
+            do_sample=False, # Tắt sampling để cấu trúc JSON ổn định
+            repetition_penalty=1.1,
             eos_token_id=self.processor.tokenizer.eos_token_id,
             pad_token_id=self.processor.tokenizer.pad_token_id,
         )
@@ -554,11 +655,19 @@ class CustomQwenVLCaptionModel:
             generation_config=gen_config
         )
 
-        # The generated caption starts after the input prompt, so we slice the output_ids accordingly
-        generated_ids = output_ids[:, inputs["input_ids"].shape[1]:]
+        generated_ids = [
+            output_ids[len(input_ids):] for input_ids, output_ids in zip(inputs.input_ids, output_ids)
+        ]
         response = self.processor.batch_decode(
             generated_ids,
             skip_special_tokens=True
-        )[0]
+        )[0].strip()
 
-        return response.strip()
+        # Parse JSON bằng hàm đã cải tiến
+        questions = self.extract_json_array(response)
+        
+        if questions and isinstance(questions, list):
+            return questions[:5]
+        
+        # Fallback nếu model trả về text thường
+        return [line.strip("- ") for line in response.split('\n') if '?' in line][:5]

@@ -27,6 +27,7 @@ The format of image_caption.json
         "article_id": ...,
         "title": ...,
         "url": ...,
+        "category": ...,
         "original_caption": ...,
         "generated_caption": ...
     }
