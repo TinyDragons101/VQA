@@ -6,7 +6,7 @@ from pathlib import Path
 # GLOBAL CONFIG
 # ======================
 
-SRC_DIR = "/raid/ltnghia01/phucpv/Eventa/webCrawl/src/crawl/plo/images"
+SRC_DIR = "/raid/ltnghia01/phucpv/Eventa/webCrawl/src/database_image"
 TARGET_DIR = "/raid/ltnghia01/phucpv/VQA/images"
 JSON_FILE = "./database.json"
 IMAGE_EXT = ".png"   # đổi nếu cần (.png, .webp...)

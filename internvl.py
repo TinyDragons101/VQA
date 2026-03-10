@@ -512,6 +512,8 @@ class CustomQwenVLCaptionModel:
 
         # 2. Processor tự động nhận diện template của Qwen3
         self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+        
+        self.processor.tokenizer.padding_side = "left"
 
         print(f"✅ {model_name} loaded successfully on {device}")
         
@@ -531,6 +533,41 @@ class CustomQwenVLCaptionModel:
                 except:
                     continue
         return None
+    
+    def extract_json_object(self, text):
+        if not text:
+            return None
+        
+        # Loại bỏ các block markdown thừa
+        clean_text = re.sub(r'```json\s*|```', '', text).strip()
+        
+        # Tìm vị trí thực tế của JSON
+        start_idx = clean_text.find('{')
+        end_idx = clean_text.rfind('}')
+        
+        # Trường hợp model quên dấu { ở đầu (do ta mồi prompt)
+        if start_idx == -1 and '"category"' in clean_text:
+            clean_text = "{" + clean_text
+            start_idx = 0
+            if end_idx == -1: # Nếu cũng thiếu dấu đóng
+                clean_text = clean_text + '}'
+                end_idx = len(clean_text) - 1
+        
+        if start_idx == -1 or end_idx == -1:
+            return None
+
+        json_str = clean_text[start_idx : end_idx + 1]
+        
+        try:
+            # Xóa các ký tự điều khiển gây lỗi parse (newline trong string, etc.)
+            json_str = "".join(c for c in json_str if ord(c) >= 32 or c in "\n\r\t")
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            # Cố gắng cứu vớt nếu thiếu dấu đóng ngoặc kép do bị cắt ngang (truncation)
+            try:
+                return json.loads(json_str + '"}')
+            except:
+                return None
 
     @torch.no_grad()
     def generate_caption_and_category(
@@ -603,6 +640,101 @@ class CustomQwenVLCaptionModel:
         return self.extract_json_array(response)
     
     @torch.no_grad()
+    def generate_batch(
+        self,
+        image_paths,
+        prompts,
+        max_new_tokens=300,
+        do_sample=True
+    ):
+        """
+        Xử lý song song một nhóm ảnh và prompts trên GPU.
+        image_paths: List[str]
+        prompts: List[str]
+        """
+        all_messages = []
+        all_images = []
+
+        # 1. Chuẩn bị Messages cho từng item trong batch
+        for img_path, p in zip(image_paths, prompts):
+            image = Image.open(img_path).convert("RGB")
+            all_images.append(image)
+            
+            messages = [
+                {
+                    "role": "system",
+                    "content": "Bạn là một biên tập viên nội dung chuyên nghiệp, chuyên phân tích văn hóa và nghệ thuật Việt Nam."
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image"},
+                        {"type": "text", "text": p},
+                    ],
+                }
+            ]
+            # Apply chat template cho từng item
+            text = self.processor.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True
+            )
+            all_messages.append(text)
+
+        # 2. Processor xử lý Batch (Quan trọng: padding=True)
+        # Qwen3-VL processor sẽ tự động handle việc resize và padding ảnh/text
+        inputs = self.processor(
+            text=all_messages,
+            images=all_images,
+            padding=True,
+            return_tensors="pt"
+        ).to(self.device)
+
+        # 3. Cấu hình generation cho Batch
+        gen_config = GenerationConfig(
+            max_new_tokens=max_new_tokens,
+            do_sample=do_sample,
+            temperature=0.7, 
+            top_p=0.9,
+            repetition_penalty=1.1,
+            # Đảm bảo dùng đúng pad_token_id để tránh lỗi lệch batch
+            pad_token_id=self.processor.tokenizer.pad_token_id or self.processor.tokenizer.eos_token_id,
+        )
+
+        # 4. Model Generate (Matrix multiplication trên A100)
+        output_ids = self.model.generate(
+            **inputs,
+            generation_config=gen_config
+        )
+
+        # 5. Decode kết quả cho cả batch
+        # Cắt bỏ phần input prompt trong output_ids
+        generated_ids = [
+            out[len(ins):] for ins, out in zip(inputs.input_ids, output_ids)
+        ]
+        
+        responses = self.processor.batch_decode(
+            generated_ids,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=True
+        )
+
+        # 6. Parse JSON cho từng kết quả trong list
+        final_results = []
+        for res_text in responses:
+            parsed = self.extract_json_object(res_text)            
+            if parsed:
+                final_results.append(parsed)
+            else:
+                # Fallback: cố gắng cứu vớt dữ liệu nếu parse thất bại
+                print(f"Failed to parse, raw response: {res_text[:100]}...")
+                final_results.append({
+                    "category": "Khác", 
+                    "caption": res_text.replace("{", "").replace("}", "").strip()[:300]
+                })
+        return final_results
+    
+    @torch.no_grad()
     def generate_questions(
         self,
         image_path,
@@ -673,6 +805,114 @@ class CustomQwenVLCaptionModel:
         return [line.strip("- ") for line in response.split('\n') if '?' in line][:5]
     
     @torch.no_grad()
+    def generate_questions_batch(
+        self,
+        image_paths,
+        prompts,
+        max_new_tokens=500,
+        do_sample=False
+    ):
+        """
+        Tạo câu hỏi VQA theo lô (Batch) cho nhiều ảnh cùng lúc.
+        """
+        all_messages = []
+        all_images = []
+
+        # 1. Chuẩn bị dữ liệu đầu vào cho từng item trong batch
+        for img_path, p in zip(image_paths, prompts):
+            try:
+                image = Image.open(img_path).convert("RGB")
+                all_images.append(image)
+                
+                messages = [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Bạn là một chuyên gia nghiên cứu văn hóa, lịch sử, nghệ thuật và kiến trúc Việt Nam. "
+                            "Dựa trên hình ảnh và thông tin bài báo, hãy đặt 5 câu hỏi VQA (Visual Question Answering) chuyên sâu. "
+                            "CHỈ trả về một JSON Array (ví dụ: [\"câu 1\", \"câu 2\"]). Không có văn bản thừa ngoài JSON."
+                        )
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image"},
+                            {"type": "text", "text": p},
+                        ],
+                    }
+                ]
+                
+                text = self.processor.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True
+                )
+                all_messages.append(text)
+            except Exception as e:
+                print(f" lỗi load ảnh {img_path}: {e}")
+                # Thêm dummy data để giữ đúng index của batch nếu 1 ảnh lỗi
+                all_messages.append("") 
+                all_images.append(Image.new('RGB', (224, 224), color='white'))
+
+        # 2. Tokenize và chuẩn bị Tensor
+        inputs = self.processor(
+            text=all_messages,
+            images=all_images,
+            padding=True,
+            return_tensors="pt"
+        ).to(self.device)
+
+        # 3. Cấu hình Generation
+        # Với câu hỏi (JSON), tắt do_sample giúp output ổn định hơn
+        gen_config = GenerationConfig(
+            max_new_tokens=max_new_tokens,
+            do_sample=do_sample,
+            temperature=0.2 if do_sample else None,
+            repetition_penalty=1.1,
+            pad_token_id=self.processor.tokenizer.pad_token_id or self.processor.tokenizer.eos_token_id,
+        )
+
+        # 4. Model Inference
+        output_ids = self.model.generate(
+            **inputs,
+            generation_config=gen_config
+        )
+
+        # 5. Decode kết quả
+        generated_ids = [
+            out[len(ins):] for ins, out in zip(inputs.input_ids, output_ids)
+        ]
+        
+        responses = self.processor.batch_decode(
+            generated_ids,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=True
+        )
+
+        # 6. Parse kết quả và xử lý Fallback
+        batch_questions = []
+        for res_text in responses:
+            res_text = res_text.strip()
+            
+            # Ưu tiên parse JSON Array
+            questions = self.extract_json_array(res_text)
+            
+            # Fallback nếu parse JSON thất bại
+            if not questions or not isinstance(questions, list):
+                # Tách dòng và lấy các dòng có dấu chấm hỏi
+                questions = [
+                    line.strip("- ").strip() 
+                    for line in res_text.split('\n') 
+                    if '?' in line
+                ]
+            
+            # Đảm bảo trả về tối đa 5 câu và không bị rỗng
+            final_qs = questions[:5] if questions else ["Bạn thấy gì trong bức ảnh này?"]
+            batch_questions.append(final_qs)
+
+        return batch_questions
+    
+    @torch.no_grad()
     def generate_answers(self, image_path, prompt, max_new_tokens=1000):
         image = Image.open(image_path).convert("RGB")
         messages = [
@@ -709,3 +949,105 @@ class CustomQwenVLCaptionModel:
 
         # Sử dụng lại hàm extract_json_array có sẵn của bạn
         return self.extract_json_array(response)
+    
+    @torch.no_grad()
+    def generate_answers_batch(
+        self,
+        image_paths,
+        prompts,
+        max_new_tokens=1024,
+        do_sample=False
+    ):
+        """
+        Trả lời danh sách câu hỏi VQA theo lô (Batch).
+        image_paths: List[str]
+        prompts: List[str] (Các prompt đã được render từ Jinja2 kèm danh sách câu hỏi)
+        """
+        all_messages = []
+        all_images = []
+
+        # 1. Chuẩn bị Messages cho batch
+        for img_path, p in zip(image_paths, prompts):
+            try:
+                image = Image.open(img_path).convert("RGB")
+                all_images.append(image)
+                
+                messages = [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Bạn là một chuyên gia nghiên cứu văn hóa và nghệ thuật Việt Nam. "
+                            "Dựa trên hình ảnh và nội dung bài báo được cung cấp, hãy trả lời các câu hỏi một cách chính xác, khách quan. "
+                            "YÊU CẦU: Trả về kết quả duy nhất dưới dạng một JSON Array các chuỗi văn bản (ví dụ: [\"đáp án 1\", \"đáp án 2\"]). "
+                            "Không giải thích dài dòng ngoài JSON."
+                        )
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image"},
+                            {"type": "text", "text": p},
+                        ],
+                    }
+                ]
+                
+                text = self.processor.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True
+                )
+                all_messages.append(text)
+            except Exception as e:
+                print(f"[-] Lỗi load ảnh {img_path}: {e}")
+                all_messages.append("") 
+                all_images.append(Image.new('RGB', (224, 224), color='white'))
+
+        # 2. Xử lý Tokenize và đưa lên GPU
+        inputs = self.processor(
+            text=all_messages,
+            images=all_images,
+            padding=True,
+            return_tensors="pt"
+        ).to(self.device)
+
+        # 3. Cấu hình Generation (Dùng Greedy để đảm bảo tính nhất quán của JSON)
+        gen_config = GenerationConfig(
+            max_new_tokens=max_new_tokens,
+            do_sample=do_sample,
+            temperature=0.2 if do_sample else None,
+            repetition_penalty=1.05, # Giảm nhẹ penalty để tránh làm hỏng cấu trúc JSON
+            pad_token_id=self.processor.tokenizer.pad_token_id or self.processor.tokenizer.eos_token_id,
+        )
+
+        # 4. Model Inference
+        output_ids = self.model.generate(
+            **inputs,
+            generation_config=gen_config
+        )
+
+        # 5. Decode
+        generated_ids = [
+            out[len(ins):] for ins, out in zip(inputs.input_ids, output_ids)
+        ]
+        
+        responses = self.processor.batch_decode(
+            generated_ids,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=True
+        )
+
+        # 6. Parse JSON Answers
+        batch_answers = []
+        for res_text in responses:
+            # Sử dụng hàm extract_json_array bạn đã viết
+            answers = self.extract_json_array(res_text)
+            
+            # Fallback nếu model trả về text thay vì JSON array
+            if not answers or not isinstance(answers, list):
+                # Tách theo dòng hoặc đánh số nếu model lỡ trả về list dạng text
+                lines = [line.strip("- 12345. ") for line in res_text.split('\n') if len(line.strip()) > 5]
+                batch_answers.append(lines)
+            else:
+                batch_answers.append(answers)
+
+        return batch_answers

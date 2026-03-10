@@ -8,21 +8,22 @@ Dựa trên hình ảnh và thông tin đi kèm, hãy đặt 7 câu hỏi VQA (V
 - Danh mục: {category}
 
 ### Chỉ dẫn đặt câu hỏi khai thác thông tin theo Danh mục "{category}":
-1. **Kiến trúc:** Hỏi đích danh tên loại mái, vật liệu (gỗ, gạch, ngói), các cấu kiện cụ thể (con rồng, đầu đao, cột trụ) và phong cách thời đại.
-2. **Sự kiện:** Hỏi về tên nghi lễ, các lễ vật xuất hiện, trang phục của người tham gia và hành động chính đang diễn ra.
+1. **Kiến trúc:** Hỏi tên vật liệu (gỗ, gạch, ngói), các cấu kiện cụ thể (con rồng, đầu đao, cột trụ) và phong cách thời đại.
+2. **Sự kiện:** Hỏi về tên nghi lễ, sự kiện, các lễ vật xuất hiện, trang phục của người tham gia và hành động chính đang diễn ra. Hỏi về nơi diễn ra sự kiện, mốc thời gian thường niên.
 3. **Con người:** Hỏi về loại trang phục (tên áo, tên mũ), đạo cụ đang cầm trên tay và vai trò cụ thể của nhân vật trong bối cảnh.
 4. **Đồ vật:** Hỏi về chất liệu chế tác, họa tiết chủ đạo (linh vật, hoa văn) và công dụng thực tế của đồ vật đó.
-5. **Văn hóa - Nghệ thuật:** Hỏi tên nhạc cụ, tên điệu múa, màu sắc đặc trưng của đạo cụ và các biểu tượng nghệ thuật xuất hiện trong ảnh.
-6. **Ẩm thực:** Hỏi tên món ăn, các nguyên liệu chính có thể quan sát được, cách trình bày và dụng cụ ăn uống/chế biến.
-7. **Địa điểm:** Hỏi về đặc điểm nhận dạng của di tích, trạng thái cũ/mới của không gian và các vật thể cố định đặc trưng.
-8. **Xã hội:** Hỏi về các hoạt động sinh hoạt cụ thể, phương tiện xuất hiện và các dấu hiệu cho thấy mốc thời gian (cổ xưa hay hiện đại), sự kiện xảy ra.
+5. **Văn hóa:** Hỏi về biểu tượng văn hóa xuất hiện trong ảnh, ý nghĩa của vật phẩm, tập quán sinh hoạt hoặc nghi lễ truyền thống. 
+6. **Nghệ thuật:** Hỏi tên nhạc cụ, tên điệu múa, màu sắc đặc trưng của đạo cụ và các biểu tượng nghệ thuật xuất hiện trong ảnh.
+7. **Ẩm thực:** Hỏi tên món ăn, các nguyên liệu chính có thể quan sát được, cách trình bày và dụng cụ ăn uống/chế biến.
+8. **Địa điểm:** Hỏi về đặc điểm nhận dạng của di tích, trạng thái cũ/mới của không gian và các vật thể cố định đặc trưng.
+9. **Xã hội:** Hỏi về các hoạt động sinh hoạt cụ thể, phương tiện xuất hiện và các dấu hiệu cho thấy mốc thời gian (cổ xưa hay hiện đại), sự kiện xảy ra.
 
 ### Quy tắc bắt buộc để lấy Ground Truth:
 - Câu hỏi phải **ngắn gọn, trực diện** (Ví dụ: "Mái đình lợp loại ngói gì?" thay vì hỏi lan man về cảm xúc).
 - Câu hỏi phải yêu cầu người trả lời phối hợp cả việc **quan sát chi tiết trong ảnh** và **đối chiếu dữ liệu văn bản**.
 - Chỉ hỏi về những thứ có bằng chứng rõ ràng trong dữ liệu đã cho.
 - TUYỆT ĐỐI không dùng chữ Hán hoặc tiếng Anh.
-- Trả về DUY NHẤT một JSON Array chứa 7 chuỗi văn bản.
+- Trả về DUY NHẤT một JSON Array chứa 7 chuỗi văn bản. Mỗi chuỗi chỉ chứa duy nhất MỘT câu hỏi với 1 dấu hỏi chấm ở cuối.
 
 Kết quả JSON:
 {

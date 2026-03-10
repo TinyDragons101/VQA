@@ -6,15 +6,18 @@ Bạn là một biên tập viên nội dung chuyên nghiệp am hiểu văn hó
 - Nội dung báo: {{ content }}
 
 ### Yêu cầu nội dung:
-1. Phân loại hình ảnh vào một trong các danh mục sau: ["Kiến trúc", "Sự kiện", "Con người", "Đồ vật", "Văn hóa - Nghệ thuật", "Ẩm thực", "Địa điểm", "Xã hội"]
+1. Phân loại hình ảnh vào một trong các danh mục sau: ["Kiến trúc", "Sự kiện", "Con người", "Ẩm thực", "Đồ vật", "Văn hóa", "Nghệ thuật", "Địa điểm", "Xã hội"]
 2. Viết mô tả hình ảnh bằng tiếng Việt tự nhiên, phong cách báo chí, trang trọng.
 2.1. Mô tả chi tiết các đối tượng (người, vật, hành động) và bố cục, màu sắc của ảnh.
 2.2. Liên hệ với ý nghĩa văn hóa, nghệ thuật hoặc lịch sử (nếu có dựa trên tiêu đề và chú thích)
 2.3. Giải thích mối liên hệ giữa hình ảnh và tiêu đề bài báo để tạo sự gắn kết.
+2.4. Chỉ dựa trên thông tin nhìn thấy. Không suy đoán bối cảnh.
 
 ### Quy tắc bắt buộc:
 - TUYỆT ĐỐI không sử dụng bất kỳ chữ Hán hoặc từ tiếng Anh nào.
-- Trả về kết quả DUY NHẤT dưới dạng JSON format như sau:
+Trả về kết quả duy nhất dưới dạng JSON format:
+
+JSON:
 {
   "category": "tên danh mục chọn được",
   "caption": "tiêu đề ảnh mô tả bằng tiếng Việt"
