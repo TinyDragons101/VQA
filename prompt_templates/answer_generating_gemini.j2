@@ -1,0 +1,8 @@
+Đây là hình ảnh trong bài báo: {title}. Với nội dung: {content}
+Sử dụng thêm thông tin chú thích hình ảnh (nếu có): {original_caption} và chú thích thêm: {generated_caption}
+Đây là danh sách câu hỏi
+{% for q in questions %}
+{{ loop.index }}. {{ q }}
+{% endfor %}
+Lọc lại các câu hỏi, chỉ giữ các câu có liên quan tới nội dung trong bài báo. 
+Cung cấp câu trả lời sử dụng thông tin trong bài báo, và sắp xếp các câu hỏi theo mức độ liên quan: 

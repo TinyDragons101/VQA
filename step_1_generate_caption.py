@@ -98,25 +98,25 @@ def process_pipeline(args):
     updated_count = 0
     
     pbar = tqdm(total=len(all_tasks), desc="Batch Processing")
-    
-    for i in range(0, len(all_tasks), batch_size):
-        batch = all_tasks[i : i + batch_size]
         
-        prompts = []
-        img_paths = []
-        for t in batch:
-            p = render_caption_prompt(args.template_dir, t['title'], t['original_caption'], t['content'])
-            prompts.append(p)
-            img_paths.append(t['image_path'])
-
-        try:
+    try:
+        for i in range(0, len(all_tasks), batch_size):
+            batch = all_tasks[i : i + batch_size]
+            
+            prompts = []
+            img_paths = []
+            for t in batch:
+                p = render_caption_prompt(args.template_dir, t['title'], t['original_caption'], t['content'])
+                prompts.append(p)
+                img_paths.append(t['image_path'])
+    
             results = model.generate_batch(
                 img_paths, 
                 prompts=prompts, 
                 max_new_tokens=300, 
                 do_sample=True
             )
-
+            
             for idx, res in enumerate(results):
                 t = batch[idx]
                 output_data[t['image_id']] = {
@@ -127,25 +127,30 @@ def process_pipeline(args):
                     "generated_caption": res.get("caption", "")
                 }
                 updated_count += 1
-
-            # Lưu file định kỳ (mỗi 120 ảnh)
-            if updated_count > 0 and updated_count % 120 == 0:
+            if updated_count >= 40:
                 save_json(output_data, args.output_path)
+                updated_count = 0
             
             # Giải phóng cache GPU (mỗi 1000 ảnh)
             if updated_count % 1000 == 0:
                 torch.cuda.empty_cache()
-
-        except Exception as e:
-            print(f"\n[!] Failed processing batch at index {i}: {e}")
-        
-        pbar.update(len(batch))
+                
+            pbar.update(len(batch))
+            
+    except KeyboardInterrupt:
+        print("\n[!] STOP Sign (Ctrl+C). Saving...")
+    except Exception as e:
+        print(f"\n[!] Undetermined Error: {e}")
+    finally:
+        # Luôn luôn chạy lệnh này dù bị dừng giữa chừng hay lỗi
+        save_json(output_data, args.output_path)
+        pbar.close()
+        print(f"[*] Saved total {len(output_data)} entries into {args.output_path}")
 
     pbar.close()
     
     # 7. Final Save
     save_json(output_data, args.output_path)
-    print(f"\n[Summary] Total entries in file: {len(output_data)} | Newly Generated: {updated_count}")
 
 def main():
     parser = argparse.ArgumentParser()
@@ -155,7 +160,7 @@ def main():
     parser.add_argument("--template_dir", type=str, default="./prompt_templates")
     parser.add_argument("--model_name", type=str, default="Qwen/Qwen3-VL-8B-Instruct")
     parser.add_argument("--device", type=str, default="cuda:4")
-    parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--batch_size", type=int, default=14)
 
     process_pipeline(parser.parse_args())
 
