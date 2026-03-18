@@ -511,7 +511,12 @@ class CustomQwenVLCaptionModel:
         ).eval()
 
         # 2. Processor tự động nhận diện template của Qwen3
-        self.processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+        self.processor = AutoProcessor.from_pretrained(
+            model_name, 
+            trust_remote_code=True,
+            in_pixels=256 * 28 * 28,
+            max_pixels=1024 * 28 * 28
+        )
         
         self.processor.tokenizer.padding_side = "left"
 

@@ -2,165 +2,211 @@ import json
 import argparse
 import os
 import torch
+import re
+from PIL import Image
 from tqdm import tqdm
 from jinja2 import Environment, FileSystemLoader
+from torch.utils.data import Dataset, DataLoader
 from internvl import CustomQwenVLCaptionModel
-from threading import Lock
 
-# Dùng Lock để tránh xung đột khi ghi file
-save_lock = Lock()
+# --- Cải tiến 1: Sử dụng Dataset để tận dụng đa nhân CPU load ảnh và render prompt ---
+class CaptionDataset(Dataset):
+    def __init__(self, tasks, template_dir):
+        self.tasks = tasks
+        # Khởi tạo Jinja2 Environment một lần duy nhất
+        self.env = Environment(
+            loader=FileSystemLoader(template_dir),
+            trim_blocks=True, 
+            lstrip_blocks=True
+        )
+        self.template = self.env.get_template("caption_generating.j2")
 
-def render_caption_prompt(template_dir, title, caption, content):
-    env = Environment(
-        loader=FileSystemLoader(template_dir),
-        trim_blocks=True,
-        lstrip_blocks=True
-    )
-    template = env.get_template("caption_generating.j2")
-    return template.render(title=title, caption=caption, content=content)
+    def __len__(self):
+        return len(self.tasks)
 
-def save_json(data, path):
-    with save_lock:
-        os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+    def __getitem__(self, idx):
+        t = self.tasks[idx]
+        try:
+            # Render prompt ngay trên CPU worker
+            prompt = self.template.render(
+                title=t['title'], 
+                caption=t['original_caption'], 
+                content=t['content']
+            )
+            # Load và convert ảnh (CPU thực hiện)
+            image = Image.open(t['image_path']).convert("RGB")
+            
+            return {
+                "image": image,
+                "prompt": prompt,
+                "image_id": t['image_id'],
+                "article_id": t['article_id'],
+                "original_caption": t['original_caption'],
+                "title": t['title']
+            }
+        except Exception as e:
+            print(f" Error loading {t['image_path']}: {e}")
+            return None
+
+# --- Cải tiến 2: Hàm gom nhóm (collate) để tiền xử lý Batch trước khi đưa vào GPU ---
+def collate_fn(batch, processor):
+    # Lọc bỏ các item lỗi (None)
+    batch = [item for item in batch if item is not None]
+    if not batch: return None
+
+    images = [item['image'] for item in batch]
+    prompts = [item['prompt'] for item in batch]
+    
+    # Áp dụng Chat Template cho cả Batch
+    texts = []
+    for p in prompts:
+        messages = [
+            {
+                "role": "system", 
+                "content": "Bạn là một biên tập viên nội dung chuyên nghiệp, chuyên phân tích văn hóa và nghệ thuật Việt Nam."
+            },
+            {
+                "role": "user", 
+                "content": [{"type": "image"}, {"type": "text", "text": p}]
+            }
+        ]
+        text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        texts.append(text)
+
+    # Processor xử lý pixel ảnh và tokenize text (CPU/GPU tùy config)
+    inputs = processor(text=texts, images=images, padding=True, return_tensors="pt")
+    return inputs, batch
 
 def process_pipeline(args):
+    # 1. Kiểm tra môi trường
     if not os.path.exists(args.database_path):
         print(f"[Error] Database not found: {args.database_path}")
         return
 
-    # 1. Quét toàn bộ file trong thư mục ảnh để tra cứu cực nhanh (O(1))
     print(f"[*] Scanning image directory: {args.image_dir}")
-    if not os.path.exists(args.image_dir):
-        print(f"[Error] Image directory not found: {args.image_dir}")
-        return
-    
-    # Lưu vào set để check file tồn tại trong tích tắc
     existing_files = set(os.listdir(args.image_dir))
     valid_extensions = ['.png', '.jpg', '.jpeg', '.webp', '.PNG', '.JPG', '.JPEG', '.WEBP']
 
-    # 2. Load database
+    # 2. Load database & Progress
     with open(args.database_path, "r", encoding="utf-8") as f:
         database = json.load(f)
 
-    # 3. Load progress (Resume)
     output_data = {}
     if os.path.exists(args.output_path):
         with open(args.output_path, "r", encoding="utf-8") as f:
             output_data = json.load(f)
-        print(f"[*] Resuming: {len(output_data)} entries loaded from output file.")
+        print(f"[*] Resuming: {len(output_data)} entries loaded.")
 
-    # 4. Lọc các task chưa được xử lý và kiểm tra file ảnh tồn tại
+    # 3. Lọc Task
     all_tasks = []
-    print("[*] Filtering tasks and checking image extensions...")
     for art_id, art in database.items():
         for img in art.get("images", []):
             image_id = img.get("image_id")
-            if not image_id: 
-                continue
-            
-            # Bỏ qua nếu đã xử lý rồi
-            if image_id in output_data and output_data[image_id].get("generated_caption"):
+            if not image_id or (image_id in output_data and output_data[image_id].get("generated_caption")):
                 continue
 
-            # Kiểm tra xem file ảnh với đuôi nào đang tồn tại trong set
-            found_filename = None
             for ext in valid_extensions:
                 target_file = f"{image_id}{ext}"
                 if target_file in existing_files:
-                    found_filename = target_file
+                    all_tasks.append({
+                        "image_id": image_id,
+                        "image_path": os.path.join(args.image_dir, target_file),
+                        "article_id": art_id,
+                        "title": art.get("title", ""),
+                        "content": art.get("content", ""),
+                        "original_caption": img.get("caption", "")
+                    })
                     break
-            
-            if found_filename:
-                image_path = os.path.join(args.image_dir, found_filename)
-                all_tasks.append({
-                    "image_id": image_id,
-                    "image_path": image_path,
-                    "article_id": art_id,
-                    "title": art.get("title", ""),
-                    "content": art.get("content", ""),
-                    "original_caption": img.get("caption", "")
-                })
 
     if not all_tasks:
         print("[*] No new images to process.")
         return
 
-    print(f"[*] Total tasks to process: {len(all_tasks)}")
-
-    # 5. Init Model
+    # 4. Init Model & DataLoader
     print(f"[*] Initializing Model on {args.device}...")
-    model = CustomQwenVLCaptionModel(model_name=args.model_name, device=args.device)
+    model_wrapper = CustomQwenVLCaptionModel(model_name=args.model_name, device=args.device)
     
-    # 6. Xử lý theo từng Batch
-    batch_size = args.batch_size
-    updated_count = 0
-    
-    pbar = tqdm(total=len(all_tasks), desc="Batch Processing")
-        
-    try:
-        for i in range(0, len(all_tasks), batch_size):
-            batch = all_tasks[i : i + batch_size]
-            
-            prompts = []
-            img_paths = []
-            for t in batch:
-                p = render_caption_prompt(args.template_dir, t['title'], t['original_caption'], t['content'])
-                prompts.append(p)
-                img_paths.append(t['image_path'])
-    
-            results = model.generate_batch(
-                img_paths, 
-                prompts=prompts, 
-                max_new_tokens=300, 
-                do_sample=True
-            )
-            
-            for idx, res in enumerate(results):
-                t = batch[idx]
-                output_data[t['image_id']] = {
-                    "article_id": t['article_id'],
-                    "title": t['title'],
-                    "category": res.get("category", ""),
-                    "original_caption": t['original_caption'],
-                    "generated_caption": res.get("caption", "")
-                }
-                updated_count += 1
-            if updated_count >= 40:
-                save_json(output_data, args.output_path)
-                updated_count = 0
-            
-            # Giải phóng cache GPU (mỗi 1000 ảnh)
-            if updated_count % 1000 == 0:
-                torch.cuda.empty_cache()
-                
-            pbar.update(len(batch))
-            
-    except KeyboardInterrupt:
-        print("\n[!] STOP Sign (Ctrl+C). Saving...")
-    except Exception as e:
-        print(f"\n[!] Undetermined Error: {e}")
-    finally:
-        # Luôn luôn chạy lệnh này dù bị dừng giữa chừng hay lỗi
-        save_json(output_data, args.output_path)
-        pbar.close()
-        print(f"[*] Saved total {len(output_data)} entries into {args.output_path}")
+    dataset = CaptionDataset(all_tasks, args.template_dir)
+    dataloader = DataLoader(
+        dataset, 
+        batch_size=args.batch_size, 
+        shuffle=False, 
+        num_workers=args.num_workers,  # Tăng tốc load ảnh bằng nhiều luồng CPU
+        collate_fn=lambda x: collate_fn(x, model_wrapper.processor)
+    )
 
-    pbar.close()
+    # Đường dẫn file backup để ghi liên tục
+    backup_path = args.output_path.replace(".json", ".jsonl")
     
-    # 7. Final Save
-    save_json(output_data, args.output_path)
+    # 5. Loop xử lý chính
+    print(f"[*] Starting Batch Processing (Batch Size: {args.batch_size})...")
+    pbar = tqdm(total=len(all_tasks), desc="Total Progress")
+    
+    try:
+        # Mở file .jsonl để append kết quả ngay lập tức (tránh mất data khi crash)
+        with open(backup_path, "a", encoding="utf-8") as f_backup:
+            for batch_data in dataloader:
+                if batch_data is None: continue
+                
+                inputs, batch_info = batch_data
+                inputs = inputs.to(model_wrapper.device)
+
+                with torch.no_grad():
+                    output_ids = model_wrapper.model.generate(
+                        **inputs,
+                        max_new_tokens=300,
+                        do_sample=True,
+                        temperature=0.7,
+                        top_p=0.9
+                    )
+
+                # Giải mã kết quả
+                generated_ids = [out[len(ins):] for ins, out in zip(inputs.input_ids, output_ids)]
+                responses = model_wrapper.processor.batch_decode(
+                    generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True
+                )
+
+                for idx, resp in enumerate(responses):
+                    t = batch_info[idx]
+                    res_json = model_wrapper.extract_json_object(resp)
+                    
+                    final_entry = {
+                        "article_id": t['article_id'],
+                        "title": t['title'],
+                        "category": res_json.get("category", "") if res_json else "",
+                        "original_caption": t['original_caption'],
+                        "generated_caption": res_json.get("caption", resp) if res_json else resp
+                    }
+                    
+                    # Lưu vào memory và ghi file backup
+                    output_data[t['image_id']] = final_entry
+                    f_backup.write(json.dumps({t['image_id']: final_entry}, ensure_ascii=False) + "\n")
+                    f_backup.flush() # Đảm bảo data được ghi xuống đĩa
+
+                pbar.update(len(batch_info))
+
+    except KeyboardInterrupt:
+        print("\n[!] User Interrupted. Saving current progress...")
+    except Exception as e:
+        print(f"\n[!] Error: {e}")
+    finally:
+        # Lưu file JSON cuối cùng một cách an toàn
+        os.makedirs(os.path.dirname(args.output_path) if os.path.dirname(args.output_path) else ".", exist_ok=True)
+        with open(args.output_path, "w", encoding="utf-8") as f:
+            json.dump(output_data, f, indent=2, ensure_ascii=False)
+        pbar.close()
+        print(f"[*] Finished! Total saved: {len(output_data)} entries.")
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--database_path", type=str, default="../Eventa/webCrawl/src/merged_database.json")
+    parser.add_argument("--database_path", type=str, default="../Eventa/webCrawl/src/merged_2_database.json")
     parser.add_argument("--output_path", type=str, default="./image_caption.json")
     parser.add_argument("--image_dir", type=str, default="../Eventa/webCrawl/src/database_image")
     parser.add_argument("--template_dir", type=str, default="./prompt_templates")
     parser.add_argument("--model_name", type=str, default="Qwen/Qwen3-VL-8B-Instruct")
-    parser.add_argument("--device", type=str, default="cuda:4")
-    parser.add_argument("--batch_size", type=int, default=14)
+    parser.add_argument("--device", type=str, default="cuda:3")
+    parser.add_argument("--batch_size", type=int, default=8)
+    parser.add_argument("--num_workers", type=int, default=16)
 
     process_pipeline(parser.parse_args())
 
