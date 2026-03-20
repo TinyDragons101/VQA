@@ -8,6 +8,10 @@ from tqdm import tqdm
 from jinja2 import Environment, FileSystemLoader
 from torch.utils.data import Dataset, DataLoader
 from internvl import CustomQwenVLCaptionModel
+import time
+
+def estimate_len(x):
+    return len(x["title"]) + len(x["content"]) + len(x["original_caption"])
 
 # --- Cải tiến 1: Sử dụng Dataset để tận dụng đa nhân CPU load ảnh và render prompt ---
 class CaptionDataset(Dataset):
@@ -27,14 +31,13 @@ class CaptionDataset(Dataset):
     def __getitem__(self, idx):
         t = self.tasks[idx]
         try:
-            # Render prompt ngay trên CPU worker
             prompt = self.template.render(
                 title=t['title'], 
                 caption=t['original_caption'], 
                 content=t['content']
             )
-            # Load và convert ảnh (CPU thực hiện)
             image = Image.open(t['image_path']).convert("RGB")
+            image = image.resize((504, 504))
             
             return {
                 "image": image,
@@ -45,12 +48,10 @@ class CaptionDataset(Dataset):
                 "title": t['title']
             }
         except Exception as e:
-            print(f" Error loading {t['image_path']}: {e}")
             return None
 
 # --- Cải tiến 2: Hàm gom nhóm (collate) để tiền xử lý Batch trước khi đưa vào GPU ---
 def collate_fn(batch, processor):
-    # Lọc bỏ các item lỗi (None)
     batch = [item for item in batch if item is not None]
     if not batch: return None
 
@@ -122,6 +123,8 @@ def process_pipeline(args):
         print("[*] No new images to process.")
         return
 
+    all_tasks.sort(key=estimate_len)
+
     # 4. Init Model & DataLoader
     print(f"[*] Initializing Model on {args.device}...")
     model_wrapper = CustomQwenVLCaptionModel(model_name=args.model_name, device=args.device)
@@ -132,7 +135,10 @@ def process_pipeline(args):
         batch_size=args.batch_size, 
         shuffle=False, 
         num_workers=args.num_workers,  # Tăng tốc load ảnh bằng nhiều luồng CPU
-        collate_fn=lambda x: collate_fn(x, model_wrapper.processor)
+        collate_fn=lambda x: collate_fn(x, model_wrapper.processor),
+        pin_memory=True,                 # ⚡ tăng tốc transfer CPU → GPU
+        persistent_workers=True,         # ⚡ tránh fork lại worker
+        prefetch_factor=4,               # ⚡ preload batch
     )
 
     # Đường dẫn file backup để ghi liên tục
@@ -141,54 +147,90 @@ def process_pipeline(args):
     # 5. Loop xử lý chính
     print(f"[*] Starting Batch Processing (Batch Size: {args.batch_size})...")
     pbar = tqdm(total=len(all_tasks), desc="Total Progress")
+
+    total_oom_count = 0 
+    max_oom_allowed = 10
     
     try:
         # Mở file .jsonl để append kết quả ngay lập tức (tránh mất data khi crash)
         with open(backup_path, "a", encoding="utf-8") as f_backup:
             for batch_data in dataloader:
                 if batch_data is None: continue
+
+                t0 = time.perf_counter()
                 
                 inputs, batch_info = batch_data
+                t1 = time.perf_counter()
+
                 inputs = inputs.to(model_wrapper.device)
+                t2 = time.perf_counter()
+                
+                try:
+                    try_count = 0
 
-                with torch.no_grad():
-                    output_ids = model_wrapper.model.generate(
-                        **inputs,
-                        max_new_tokens=300,
-                        do_sample=True,
-                        temperature=0.7,
-                        top_p=0.9
+                    with torch.no_grad():
+                        output_ids = model_wrapper.model.generate(
+                            **inputs,
+                            max_new_tokens=300,
+                            do_sample=True,
+                            temperature=0.7,
+                            top_p=0.9
+                        )
+                    t3 = time.perf_counter()
+
+                    # Giải mã kết quả
+                    generated_ids = [out[len(ins):] for ins, out in zip(inputs.input_ids, output_ids)]
+                    responses = model_wrapper.processor.batch_decode(
+                        generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True
                     )
+                    t4 = time.perf_counter()
 
-                # Giải mã kết quả
-                generated_ids = [out[len(ins):] for ins, out in zip(inputs.input_ids, output_ids)]
-                responses = model_wrapper.processor.batch_decode(
-                    generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True
-                )
+                    for idx, resp in enumerate(responses):
+                        t = batch_info[idx]
+                        res_json = model_wrapper.extract_json_object(resp)
+                        
+                        final_entry = {
+                            "article_id": t['article_id'],
+                            "title": t['title'],
+                            "category": res_json.get("category", "") if res_json else "",
+                            "original_caption": t['original_caption'],
+                            "generated_caption": res_json.get("caption", resp) if res_json else resp
+                        }
+                        
+                        # Lưu vào memory và ghi file backup
+                        output_data[t['image_id']] = final_entry
+                        f_backup.write(json.dumps({t['image_id']: final_entry}, ensure_ascii=False) + "\n")
+                        f_backup.flush() # Đảm bảo data được ghi xuống đĩa
+                    t5 = time.perf_counter()
 
-                for idx, resp in enumerate(responses):
-                    t = batch_info[idx]
-                    res_json = model_wrapper.extract_json_object(resp)
+                    print(f"""
+                    ⏱️ Timing:
+                    - DataLoader + collate: {t1 - t0:.3f}s
+                    - Move to GPU:         {t2 - t1:.3f}s
+                    - Generate (GPU):      {t3 - t2:.3f}s
+                    - Decode:              {t4 - t3:.3f}s
+                    - Extract:             {t5 - t4:.3f}s
+                    """)
+
+                    pbar.update(len(batch_info))
                     
-                    final_entry = {
-                        "article_id": t['article_id'],
-                        "title": t['title'],
-                        "category": res_json.get("category", "") if res_json else "",
-                        "original_caption": t['original_caption'],
-                        "generated_caption": res_json.get("caption", resp) if res_json else resp
-                    }
+                except torch.cuda.OutOfMemoryError:
+                    total_oom_count += 1
+                    torch.cuda.empty_cache()
+                    print(f"\n[!] OOM lần {total_oom_count}/{max_oom_allowed} tại batch hiện tại.")
                     
-                    # Lưu vào memory và ghi file backup
-                    output_data[t['image_id']] = final_entry
-                    f_backup.write(json.dumps({t['image_id']: final_entry}, ensure_ascii=False) + "\n")
-                    f_backup.flush() # Đảm bảo data được ghi xuống đĩa
-
-                pbar.update(len(batch_info))
+                    if total_oom_count >= max_oom_allowed:
+                        print("!!! Quá giới hạn OOM cho phép. Đang dừng chương trình để bảo vệ GPU...")
+                        raise  # Đẩy lỗi ra ngoài để rơi vào khối 'finally' lưu data
+                    
+                    continue
 
     except KeyboardInterrupt:
         print("\n[!] User Interrupted. Saving current progress...")
+        
     except Exception as e:
         print(f"\n[!] Error: {e}")
+        
     finally:
         # Lưu file JSON cuối cùng một cách an toàn
         os.makedirs(os.path.dirname(args.output_path) if os.path.dirname(args.output_path) else ".", exist_ok=True)
@@ -204,9 +246,9 @@ def main():
     parser.add_argument("--image_dir", type=str, default="../Eventa/webCrawl/src/database_image")
     parser.add_argument("--template_dir", type=str, default="./prompt_templates")
     parser.add_argument("--model_name", type=str, default="Qwen/Qwen3-VL-8B-Instruct")
-    parser.add_argument("--device", type=str, default="cuda:3")
-    parser.add_argument("--batch_size", type=int, default=8)
-    parser.add_argument("--num_workers", type=int, default=16)
+    parser.add_argument("--device", type=str, default="cuda:2")
+    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--num_workers", type=int, default=8)
 
     process_pipeline(parser.parse_args())
 
