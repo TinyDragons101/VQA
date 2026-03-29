@@ -11,6 +11,7 @@ from internvl import CustomQwenVLCaptionModel
 import time
 
 def estimate_len(x):
+    print(f"Estimating length for image_id: {x['image_id']} - title: {len(x['title'])}, content: {len(x['content'])}, original_caption: {len(x['original_caption'])}")
     return len(x["title"]) + len(x["content"]) + len(x["original_caption"])
 
 # --- Cải tiến 1: Sử dụng Dataset để tận dụng đa nhân CPU load ảnh và render prompt ---
@@ -34,7 +35,8 @@ class CaptionDataset(Dataset):
             prompt = self.template.render(
                 title=t['title'], 
                 caption=t['original_caption'], 
-                content=t['content']
+                # content=t['content']
+                content=t['content'][:5000] if len(t['content']) > 5000 else t['content']
             )
             image = Image.open(t['image_path']).convert("RGB")
             image = image.resize((504, 504))
@@ -137,8 +139,8 @@ def process_pipeline(args):
         num_workers=args.num_workers,  # Tăng tốc load ảnh bằng nhiều luồng CPU
         collate_fn=lambda x: collate_fn(x, model_wrapper.processor),
         pin_memory=True,                 # ⚡ tăng tốc transfer CPU → GPU
-        persistent_workers=True,         # ⚡ tránh fork lại worker
-        prefetch_factor=4,               # ⚡ preload batch
+        persistent_workers=False,         # ⚡ tránh fork lại worker - Phải là False nếu num_workers=0
+        prefetch_factor=None,               # ⚡ preload batch
     )
 
     # Đường dẫn file backup để ghi liên tục
@@ -242,13 +244,13 @@ def process_pipeline(args):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--database_path", type=str, default="../Eventa/webCrawl/src/merged_2_database.json")
-    parser.add_argument("--output_path", type=str, default="./image_caption.json")
+    parser.add_argument("--output_path", type=str, default="./image_caption_updated.json")
     parser.add_argument("--image_dir", type=str, default="../Eventa/webCrawl/src/database_image")
     parser.add_argument("--template_dir", type=str, default="./prompt_templates")
     parser.add_argument("--model_name", type=str, default="Qwen/Qwen3-VL-8B-Instruct")
-    parser.add_argument("--device", type=str, default="cuda:2")
-    parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--num_workers", type=int, default=8)
+    parser.add_argument("--device", type=str, default="cuda:6")
+    parser.add_argument("--batch_size", type=int, default=1)
+    parser.add_argument("--num_workers", type=int, default=0)
 
     process_pipeline(parser.parse_args())
 
