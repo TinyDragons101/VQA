@@ -24,7 +24,7 @@ def render_vqa_prompt(template_dir, entry):
     return template.render(
         title=entry.get("title", ""),
         original_caption=entry.get("original_caption", ""),
-        generated_caption=entry.get("generated_caption", ""),
+        generated_caption=entry.get("generated_caption", "")[:1000],
     )
 
 def save_json(data, path):
@@ -60,10 +60,13 @@ def process_vqa_pipeline(args):
         if image_id in vqa_output:
             continue
         
-        # Hỗ trợ cả .png và .jpg tùy dataset của bạn
-        image_path = os.path.join(args.image_dir, f"{image_id}.png")
-        if not os.path.exists(image_path):
-            image_path = os.path.join(args.image_dir, f"{image_id}.jpg")
+        valid_extensions = [".png", ".jpg", ".jpeg", ".PNG", ".JPG", ".webp"]
+        image_path = None
+        for ext in valid_extensions:
+            test_path = os.path.join(args.image_dir, f"{image_id}{ext}")
+            if os.path.exists(test_path):
+                image_path = test_path
+                break
 
         if os.path.exists(image_path):
             all_tasks.append({
@@ -75,6 +78,10 @@ def process_vqa_pipeline(args):
     if not all_tasks:
         print("[*] No new images to process.")
         return
+
+    if args.limit > 0:
+        all_tasks = all_tasks[:args.limit]
+        print(f"[*] Limit applied: Only processing the first {len(all_tasks)} tasks.")
 
     print(f"[*] Total tasks to process: {len(all_tasks)}")
 
@@ -101,7 +108,7 @@ def process_vqa_pipeline(args):
             for idx, questions in enumerate(batch_results):
                 img_id = batch_ids[idx]
                 if questions and isinstance(questions, list):
-                    vqa_list = [{"question": q, "answer": ""} for q in questions]
+                    vqa_list = questions
                     vqa_output[img_id] = vqa_list
                     updated_count += 1
 
@@ -122,11 +129,14 @@ def process_vqa_pipeline(args):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--caption_json_path", type=str, default="./image_caption3.json")
-    parser.add_argument("--output_vqa_path", type=str, default="./image_vqa3.json")
+    parser.add_argument("--caption_json_path", type=str, default="./image_caption_updated.json")
+    parser.add_argument("--output_vqa_path", type=str, default="./image_questions.json")
     parser.add_argument("--image_dir", type=str, default="../Eventa/webCrawl/src/database_image")
     parser.add_argument("--template_dir", type=str, default="./prompt_templates")
     parser.add_argument("--model_name", type=str, default="gemini-2.5-flash-lite")
+
+    # Limit
+    parser.add_argument("--limit", type=int, default=20, help="Giới hạn số lượng ảnh xử lý mới")
     
     # Threading options (API chịu được khoảng 5-10 request song song tùy loại tài khoản)
     parser.add_argument("--batch_size", type=int, default=1, help="Số lượng task xử lý trước khi lưu file")

@@ -8,14 +8,18 @@ from google.genai import types
 from google.oauth2 import credentials
 from PIL import Image
 from dotenv import load_dotenv
-import tqdm
+from tqdm import tqdm
+from threading import Lock
+import threading
+
+api_call_count = 0
+api_call_lock = Lock()
 
 load_dotenv()
 
 class GeminiVLCaptionModel:
     def __init__(
         self,
-        api_key: str = None,
         model_name: str = "gemini-2.0-flash",
     ):
         """
@@ -51,7 +55,7 @@ class GeminiVLCaptionModel:
         """
         try:
             # Mở ảnh bằng PIL
-            image = Image.open(image_path)
+            image = load_and_resize_image(image_path, 512)
             
             # Cấu hình hệ thống và format đầu ra
             config = types.GenerateContentConfig(
@@ -66,6 +70,8 @@ class GeminiVLCaptionModel:
                 contents=[prompt, image],
                 config=config
             )
+
+            increase_api_count()
 
             # Xử lý text trả về
             if not response.text:
@@ -106,22 +112,21 @@ class GeminiVLCaptionModel:
                 results[idx] = future.result()
         return results
     
-    def generate_answers(self, image_path: str, prompt: str) -> List[str]:
+    def generate_answers(self, image_path: str, prompt: str) -> List[List[str]]:
         """
-        Gửi ảnh và danh sách câu hỏi qua Gemini, yêu cầu trả về list câu trả lời JSON.
+        Trả về format: [["Câu hỏi 1", "Câu trả lời 1"], ["Câu hỏi 2", "Câu trả lời 2"]]
         """
         try:
-            image = Image.open(image_path)
+            image = load_and_resize_image(image_path, 512)
             
-            # Chỉ thị hệ thống ép model trả về đúng định dạng JSON array
             config = types.GenerateContentConfig(
                 system_instruction=(
-                    "Bạn là chuyên gia phân tích hình ảnh và báo chí. "
-                    "Dựa trên nội dung bài báo và hình ảnh, hãy trả lời các câu hỏi được cung cấp. "
-                    "TRẢ VỀ DUY NHẤT một JSON Array chứa các chuỗi văn bản (string) tương ứng với thứ tự câu hỏi. "
-                    "Ví dụ: [\"Câu trả lời 1\", \"Câu trả lời 2\"]. Không giải thích gì thêm."
+                    "Bạn là chuyên gia phân tích báo chí. "
+                    "Hãy lọc các câu hỏi liên quan, trả lời dựa trên bài báo và hình ảnh. "
+                    "Sắp xếp theo độ quan trọng giảm dần. "
+                    "TRẢ VỀ DUY NHẤT một JSON Array theo định dạng: [[\"câu hỏi\", \"câu trả lời\"], [...]]"
                 ),
-                temperature=0.2, # Giảm nhiệt độ để câu trả lời chính xác hơn
+                temperature=0.2, # Thấp để đảm bảo tính xác thực
                 response_mime_type="application/json",
             )
 
@@ -131,34 +136,53 @@ class GeminiVLCaptionModel:
                 config=config
             )
 
+            increase_api_count()
+
             if not response.text:
                 return []
 
+            # Parse kết quả
             data = json.loads(response.text.strip())
             
-            # Xử lý nếu model trả về dict lồng list
+            # Nếu model trả về object lồng (ví dụ {"qa_pairs": [[...]]})
             if isinstance(data, dict):
                 for val in data.values():
                     if isinstance(val, list): return val
+            
             return data if isinstance(data, list) else []
 
         except Exception as e:
             if "429" in str(e):
-                time.sleep(10) # Chờ lâu hơn nếu bị giới hạn quota
-            print(f"[-] Error tại {os.path.basename(image_path)}: {e}")
+                time.sleep(10)
+            print(f"[-] Error answers {os.path.basename(image_path)}: {e}")
             return []
 
-    def generate_answers_parallel(self, tasks, max_workers=5):
-        """
-        Chạy song song các request API.
-        """
+    def generate_answers_batch(self, tasks, max_workers=5):
         results = [None] * len(tasks)
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_idx = {
                 executor.submit(self.generate_answers, t['image_path'], t['prompt']): i 
                 for i, t in enumerate(tasks)
             }
-            for future in tqdm(concurrent.futures.as_completed(future_to_idx), total=len(tasks), desc="Gemini API Calling"):
+            # Sử dụng tqdm để theo dõi tiến độ gọi API
+            for future in tqdm(concurrent.futures.as_completed(future_to_idx), total=len(tasks), desc="Gemini API Answering"):
                 idx = future_to_idx[future]
                 results[idx] = future.result()
         return results
+
+def load_and_resize_image(path, max_size=512):
+    image = Image.open(path).convert("RGB")
+    
+    # Resize giữ aspect ratio
+    image.thumbnail((max_size, max_size))
+    
+    return image
+
+def increase_api_count():
+    global api_call_count
+    
+    with api_call_lock:
+        api_call_count += 1
+        
+        if api_call_count % 10 == 0:
+            print(f"[API CALL] Total: {api_call_count} | Thread: {threading.current_thread().name}")
