@@ -20,30 +20,50 @@ load_dotenv()
 class GeminiVLCaptionModel:
     def __init__(
         self,
-        model_name: str = "gemini-2.0-flash",
+        model_name: str = "gemini-2.5-flash-lite",
     ):
         """
         Khởi tạo Gemini API Client sử dụng SDK google-genai mới.
         """
-        project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
-        location = os.getenv("GOOGLE_CLOUD_LOCATION")
-        access_token = os.getenv("GCP_ACCESS_TOKEN")
+        self.project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
+        self.access_token = os.getenv("GCP_ACCESS_TOKEN")
+        self.model_name = model_name
 
-        if not all([project_id, location, access_token]):
+        if not all([self.project_id, self.access_token]):
             raise ValueError("❌ Thiếu cấu hình GCP trong file .env (Project, Location hoặc Token)")
-        
-        creds = credentials.Credentials(access_token)
-        
+        self.creds = credentials.Credentials(token=self.access_token)
+                
         # Khởi tạo Client mới
-        self.client = genai.Client(
-            vertexai=True, 
-            project=project_id, 
-            location=location,
-            credentials=creds
-        )
         self.model_name = model_name
         
+        self.locations = [
+            "us-central1", "us-east1", "us-east4", "us-east5", "us-south1", "us-west1", "us-west4",
+            "europe-central2", "europe-north1", "europe-southwest1", "europe-west1", "europe-west4", "europe-west8", "europe-west9"
+        ]   
+        
+        self.clients = []
+        for loc in self.locations:
+            client = genai.Client(
+                vertexai=True, 
+                project=self.project_id, 
+                location=loc,
+                credentials=self.creds
+            )
+            self.clients.append({"client": client, "location": loc})
+        
+        # Biến điều khiển Round Robin
+        self.current_idx = 0
+        self.rr_lock = Lock()
+        
         print(f"✅ Gemini SDK (google-genai) loaded: {model_name}")
+        print(f"✅ Total Regions Active: {len(self.locations)}")
+    
+    def _get_next_client_info(self):
+        """Lấy Client tiếp theo theo cơ chế Round Robin."""
+        with self.rr_lock:
+            client_info = self.clients[self.current_idx]
+            self.current_idx = (self.current_idx + 1) % len(self.clients)
+            return client_info
 
     def generate_questions(
         self,
@@ -53,6 +73,10 @@ class GeminiVLCaptionModel:
         """
         Tạo 5 câu hỏi VQA dưới dạng JSON Array sử dụng SDK mới.
         """
+        info = self._get_next_client_info()
+        client = info["client"]
+        loc = info["location"]
+        
         try:
             # Mở ảnh bằng PIL
             image = load_and_resize_image(image_path, 512)
@@ -65,7 +89,7 @@ class GeminiVLCaptionModel:
             )
 
             # Gọi API (Thứ tự trong SDK mới là nội dung trước, config sau)
-            response = self.client.models.generate_content(
+            response = client.models.generate_content(
                 model=self.model_name,
                 contents=[prompt, image],
                 config=config
@@ -91,7 +115,7 @@ class GeminiVLCaptionModel:
         except Exception as e:
             # Xử lý lỗi Rate Limit (429) hoặc lỗi kết nối
             if "429" in str(e):
-                print(f"[!] Rate limit hit for {image_path}, waiting...")
+                print(f"[!] Rate limit hit for {image_path}, waiting... Error: {e}")
                 time.sleep(5)
             else:
                 print(f"[-] Error processing {image_path}: {e}")
@@ -116,21 +140,27 @@ class GeminiVLCaptionModel:
         """
         Trả về format: [["Câu hỏi 1", "Câu trả lời 1"], ["Câu hỏi 2", "Câu trả lời 2"]]
         """
+        info = self._get_next_client_info()
+        client = info["client"]
+        loc = info["location"]
+        
         try:
             image = load_and_resize_image(image_path, 512)
             
             config = types.GenerateContentConfig(
                 system_instruction=(
-                    "Bạn là chuyên gia phân tích báo chí. "
-                    "Hãy lọc các câu hỏi liên quan, trả lời dựa trên bài báo và hình ảnh. "
-                    "Sắp xếp theo độ quan trọng giảm dần. "
+                    "Bạn là một trợ lý AI phân tích hình ảnh và bài báo chuyên nghiệp."
+                    "Trả lời dựa trên bài báo và hình ảnh. "
                     "TRẢ VỀ DUY NHẤT một JSON Array theo định dạng: [[\"câu hỏi\", \"câu trả lời\"], [...]]"
                 ),
                 temperature=0.2, # Thấp để đảm bảo tính xác thực
                 response_mime_type="application/json",
             )
+            
+            print(f"[*] Generating answers for {os.path.basename(image_path)} using {loc}...")
+            print(f"[*] Prompt length: {len(prompt)} characters")
 
-            response = self.client.models.generate_content(
+            response = client.models.generate_content(
                 model=self.model_name,
                 contents=[prompt, image],
                 config=config
@@ -170,7 +200,7 @@ class GeminiVLCaptionModel:
                 results[idx] = future.result()
         return results
 
-def load_and_resize_image(path, max_size=512):
+def load_and_resize_image(path, max_size=384):
     image = Image.open(path).convert("RGB")
     
     # Resize giữ aspect ratio

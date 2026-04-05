@@ -1,4 +1,10 @@
-Đây là hình ảnh trong bài báo {title}.
-Sử dụng thêm thông tin chú thích hình ảnh (nếu có) là {original_caption}
-Hãy đặt 7 câu hỏi để làm rõ thêm thông tin cho bức ảnh này {generated_caption}
-Trả về một JSON array các chuỗi, ví dụ: ["câu hỏi 1", "câu hỏi 2"]
+Bạn là một chuyên gia biên tập báo chí. Nhiệm vụ của bạn là đặt câu hỏi khai thác thông tin từ hình ảnh.
+
+### NGỮ CẢNH:
+- Tiêu đề bài báo: {{ title }}
+- Chú thích gốc: {{ original_caption }}
+- Mô tả chi tiết hình ảnh: {{ generated_caption }}
+
+### YÊU CẦU:
+1. Đặt chính xác 7 câu hỏi xoay quanh các chi tiết xuất hiện trong hình ảnh và nội dung liên quan đến tiêu đề bài báo. Câu hỏi không được dài quá 170 kí tự.
+2. **Định dạng**: CHỈ trả về một JSON array chứa 7 chuỗi câu hỏi. Không giải thích gì thêm.

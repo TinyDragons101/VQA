@@ -1,6 +1,7 @@
 import os
 import json
 import argparse
+import time
 from typing import List, Dict, Any
 from tqdm import tqdm
 from jinja2 import Environment, FileSystemLoader
@@ -30,12 +31,16 @@ def render_answer_prompt(template_dir, entry, article_content, questions):
     )
 
 def save_json(data, path):
+    """Lưu file JSON an toàn bằng cách ghi vào file tạm trước"""
+    temp_path = path + ".tmp"
     os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+    
+    with open(temp_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(temp_path, path)
 
 def find_image_path(image_dir, image_id):
-    for ext in ['.png', '.jpg', '.jpeg', '.JPG', '.PNG']:
+    for ext in ['.png', '.jpg', '.jpeg', '.JPG', '.PNG', '.webp']:
         path = os.path.join(image_dir, f"{image_id}{ext}")
         if os.path.exists(path):
             return path
@@ -55,16 +60,19 @@ def process_answering_pipeline(args):
     with open(args.vqa_json_path, "r", encoding="utf-8") as f:
         vqa_data = json.load(f)
 
-    # Load output cũ để resume nếu cần (hoặc tạo mới)
+    # 2. Resume logic: Load output cũ
     output_data = {}
     if os.path.exists(args.output_json_path):
-        with open(args.output_json_path, "r", encoding="utf-8") as f:
-            output_data = json.load(f)
+        try:
+            with open(args.output_json_path, "r", encoding="utf-8") as f:
+                output_data = json.load(f)
+            print(f"[*] Resuming: {len(output_data)} images already answered.")
+        except:
+            output_data = {}
 
-    # 2. Chuẩn bị Task
+    # 3. Chuẩn bị Task
     all_tasks = []
     for image_id, questions in vqa_data.items():
-        # Bỏ qua nếu đã xử lý rồi (Resume logic)
         if image_id in output_data and output_data[image_id]:
             continue
 
@@ -72,7 +80,6 @@ def process_answering_pipeline(args):
         image_path = find_image_path(args.image_dir, image_id)
         
         if entry and image_path:
-            # Lấy nội dung bài báo từ database qua article_id (hoặc id trực tiếp)
             article_id = entry.get("article_id", image_id) 
             article_info = database.get(article_id, {})
             article_content = article_info.get("content", "Không có nội dung.")
@@ -82,70 +89,97 @@ def process_answering_pipeline(args):
             all_tasks.append({
                 "image_id": image_id,
                 "image_path": image_path,
-                "prompt": prompt
+                "prompt": prompt,
+                "prompt_len": len(prompt)
             })
 
     if not all_tasks:
         print("[*] No new images/questions to process.")
         return
+    
+    # Sắp xếp theo độ dài prompt để tối ưu hóa xử lý batch (tùy chọn)
+    all_tasks.sort(key=lambda x: x['prompt_len'])
+    
+    if args.limit and args.limit > 0:
+        all_tasks = all_tasks[:args.limit]
+        print(f"[*] Limit applied: Processing {len(all_tasks)} tasks.")
 
-    print(f"[*] Total images to process: {len(all_tasks)}")
+    backup_path = args.output_json_path.replace(".json", ".jsonl")
+    print(f"[*] Total tasks to process: {len(all_tasks)}")
 
-    # 3. Khởi tạo Model
+    # 4. Khởi tạo Model
     model = GeminiVLCaptionModel(model_name=args.model_name)
 
-    # 4. Batch Processing
+    # 5. Batch Processing
     batch_size = args.batch_size
+    updated_count = 0
     pbar = tqdm(total=len(all_tasks), desc="Gemini Answering")
 
-    for i in range(0, len(all_tasks), batch_size):
-        batch = all_tasks[i : i + batch_size]
-        
-        batch_prompt = [t['prompt'] for t in batch]
-        batch_img_paths = [t['image_path'] for t in batch]
-        batch_ids = [t['image_id'] for t in batch]
+    try:
+        # Mở file backup .jsonl ở chế độ append
+        with open(backup_path, "a", encoding="utf-8") as f_backup:
+            for i in range(0, len(all_tasks), batch_size):
+                batch = all_tasks[i : i + batch_size]
+                batch_ids = [t['image_id'] for t in batch]
+                
+                for task in batch:
+                    print(f"[*] Image ID: {task['image_id']} | Prompt Length: {task['prompt_len']} characters")
 
-        try:
-            # Lưu ý: Hàm generate_answers_batch cần trả về list các list [Q, A]
-            # Bạn có thể cần parse JSON từ chuỗi text mà Gemini trả về trong model.py
-            batch_results = model.generate_answers_batch(
-                tasks=batch, 
-                max_workers=args.workers
-            )
+                try:
+                    # Gọi API song song
+                    batch_results = model.generate_answers_batch(
+                        tasks=batch, 
+                        max_workers=args.workers
+                    )
 
-            for idx, result in enumerate(batch_results):
-                img_id = batch_ids[idx]
-                if result and isinstance(result, list):
-                    # Lưu lại format [["Q","A"], ["Q","A"]]
-                    output_data[img_id] = result
+                    for idx, result in enumerate(batch_results):
+                        img_id = batch_ids[idx]
+                        if result and isinstance(result, list):
+                            # Lưu vào RAM
+                            output_data[img_id] = result
+                            updated_count += 1
+                            
+                            # Ghi ngay vào file backup .jsonl (mỗi dòng 1 object)
+                            line = json.dumps({img_id: result}, ensure_ascii=False)
+                            f_backup.write(line + "\n")
+                    
+                    # Đảm bảo dữ liệu được ghi xuống đĩa cứng
+                    f_backup.flush()
 
-            # Lưu định kỳ
-            if (i // batch_size) % 5 == 0:
-                save_json(output_data, args.output_json_path)
+                    # Lưu file .json chính định kỳ mỗi 5 batch
+                    if (i // batch_size) % 5 == 0:
+                        save_json(output_data, args.output_json_path)
 
-        except Exception as e:
-            print(f"\n[!] Error at batch starting with {batch_ids[0]}: {e}")
-        
-        pbar.update(len(batch))
+                except Exception as e:
+                    print(f"\n[!] Error at batch starting with {batch_ids[0]}: {e}")
+                    # Tùy chọn: time.sleep(2) nếu cần
+                
+                pbar.update(len(batch))
 
-    pbar.close()
-
-    # 5. Final Save
-    save_json(output_data, args.output_json_path)
-    print(f"\n[DONE] Processed {len(output_data)} images. Output saved to {args.output_json_path}")
+    except KeyboardInterrupt:
+        print("\n[!] User Interrupted (^C). Saving progress...")
+    except Exception as e:
+        print(f"\n[!] Unexpected error: {e}")
+    finally:
+        # Final Save: Luôn chạy khi kết thúc hoặc lỗi
+        if updated_count > 0:
+            save_json(output_data, args.output_json_path)
+            print(f"\n[*] Final save completed. Total entries: {len(output_data)}")
+        pbar.close()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--database_path", type=str, default="../Eventa/webCrawl/src/merged_database.json")
-    parser.add_argument("--caption_json_path", type=str, default="./image_caption3.json")
-    parser.add_argument("--vqa_json_path", type=str, default="./image_question3.json")
-    parser.add_argument("--output_json_path", type=str, default="./image_vqa3.json")
+    parser.add_argument("--caption_json_path", type=str, default="./image_caption_updated.json")
+    parser.add_argument("--vqa_json_path", type=str, default="./image_questions.json")
+    parser.add_argument("--output_json_path", type=str, default="./image_vqa.json")
     parser.add_argument("--image_dir", type=str, default="../Eventa/webCrawl/src/database_image")
     parser.add_argument("--template_dir", type=str, default="./prompt_templates")
     parser.add_argument("--model_name", type=str, default="gemini-2.5-flash-lite")
     
-    parser.add_argument("--batch_size", type=int, default=1)
-    parser.add_argument("--workers", type=int, default=1, help="Số luồng API chạy song song")
+    parser.add_argument("--batch_size", type=int, default=5)
+    parser.add_argument("--workers", type=int, default=5, help="Số luồng API chạy song song")
+    parser.add_argument("--limit", type=int, default=1000, help="Giới hạn số lượng ảnh cần process")
     
     args = parser.parse_args()
     process_answering_pipeline(args)

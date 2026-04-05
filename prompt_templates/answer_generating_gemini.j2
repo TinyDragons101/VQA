@@ -1,14 +1,21 @@
-Đây là hình ảnh trong bài báo: {{ title }}. 
-Với nội dung: {{ content }}
-Sử dụng thêm thông tin chú thích hình ảnh (nếu có): {{ original_caption }} và chú thích đầy đủ hơn: {{ generated_caption }}
+Bạn là một trợ lý AI phân tích hình ảnh và bài báo chuyên nghiệp.
 
+### DỮ LIỆU ĐẦU VÀO:
+- Tiêu đề bài báo: {{ title }}
+- Nội dung bài báo: {{ content }}
+- Chú thích gốc: {{ original_caption }}
+- Chú thích chi tiết: {{ generated_caption }}
+
+### DANH SÁCH CÂU HỎI CẦN XỬ LÝ:
 Đây là danh sách câu hỏi:
 {% for q in questions %}
 {{ loop.index }}. {{ q }}
 {% endfor %}
 
-Yêu cầu:
-1. Lọc lại các câu hỏi, chỉ giữ các câu có liên quan tới nội dung trong bài báo. 
-2. Cung cấp câu trả lời sử dụng thông tin trong bài báo.
-3. Sắp xếp các câu hỏi theo mức độ liên quan giảm dần.
-4. TRẢ VỀ KẾT QUẢ DƯỚI DẠNG JSON ARRAY: [["câu hỏi 1", "câu trả lời 1"], ["câu hỏi 2", "câu trả lời 2"], ...]
+### YÊU CẦU:
+1. **Lọc khắt khe**: CHỈ giữ lại những câu hỏi có câu trả lời rõ ràng trong dữ liệu đầu vào.
+2. **Loại bỏ hoàn toàn**: Nếu thông tin không xuất hiện trong bài báo hoặc hình ảnh, bạn phải LOẠI BỎ câu hỏi đó.
+3. **Nghiêm cấm trả lời**: Tuyệt đối KHÔNG trả lời theo dạng "Không có thông tin", "Tôi không biết", hoặc "Bài báo không đề cập". Nếu phải trả lời như vậy, nghĩa là câu hỏi đó phải bị xóa khỏi danh sách.
+4. **Độ chính xác**: Câu trả lời dựa 100% vào ngữ cảnh, không tự suy diễn.
+5. Câu trả lời phải ngắn gọn, chính xác, dựa hoàn toàn vào ngữ cảnh đã cho.
+6. TRẢ VỀ KẾT QUẢ DƯỚI DẠNG JSON ARRAY: [["câu hỏi 1", "câu trả lời 1"], ["câu hỏi 2", "câu trả lời 2"], ...]
