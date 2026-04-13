@@ -274,8 +274,8 @@ class CustomQwenVLCaptionModel:
         prompt="Dựa trên hình ảnh, hãy tạo 5 câu hỏi về các chi tiết nghệ thuật và văn hóa.",
         max_new_tokens=400
     ):
-        image = Image.open(image_path).convert("RGB")
-
+        
+        image = load_and_resize_image(image_path, 512)
         messages = [
             {
                 "role": "system",
@@ -446,8 +446,8 @@ class CustomQwenVLCaptionModel:
         return batch_questions
     
     @torch.no_grad()
-    def generate_answers(self, image_path, prompt, max_new_tokens=1000):
-        image = Image.open(image_path).convert("RGB")
+    def generate_answers(self, image_path, prompt):
+        image = load_and_resize_image(image_path, 512)
         messages = [
             {
                 "role": "system",
@@ -468,9 +468,9 @@ class CustomQwenVLCaptionModel:
         output_ids = self.model.generate(
             **inputs,
             generation_config=GenerationConfig(
-                max_new_tokens=max_new_tokens,
+                max_new_tokens=1024,
                 do_sample=False,
-                temperature=0.0,
+                temperature=0.1,
                 eos_token_id=self.processor.tokenizer.eos_token_id,
             )
         )
@@ -484,22 +484,14 @@ class CustomQwenVLCaptionModel:
         return self.extract_json_array(response)
     
     @torch.no_grad()
-    def generate_answers_batch(
-        self,
-        image_paths,
-        prompts,
-        max_new_tokens=1024,
-        do_sample=False
-    ):
+    def generate_answers_batch(self, image_paths, prompts):
         """
-        Trả lời danh sách câu hỏi VQA theo lô (Batch).
-        image_paths: List[str]
-        prompts: List[str] (Các prompt đã được render từ Jinja2 kèm danh sách câu hỏi)
+        Đã sửa đổi: Nhận trực tiếp list image_paths và prompts 
+        để khớp với file pipeline của bạn.
         """
         all_messages = []
         all_images = []
 
-        # 1. Chuẩn bị Messages cho batch
         for img_path, p in zip(image_paths, prompts):
             try:
                 image = Image.open(img_path).convert("RGB")
@@ -508,12 +500,7 @@ class CustomQwenVLCaptionModel:
                 messages = [
                     {
                         "role": "system",
-                        "content": (
-                            "Bạn là một chuyên gia nghiên cứu văn hóa và nghệ thuật Việt Nam. "
-                            "Dựa trên hình ảnh và nội dung bài báo được cung cấp, hãy trả lời các câu hỏi một cách chính xác, khách quan. "
-                            "YÊU CẦU: Trả về kết quả duy nhất dưới dạng một JSON Array các chuỗi văn bản (ví dụ: [\"đáp án 1\", \"đáp án 2\"]). "
-                            "Không giải thích dài dòng ngoài JSON."
-                        )
+                        "content": "Bạn là chuyên gia nghiên cứu văn hóa, nghệ thuật. Trả lời dựa trên bài báo và hình ảnh. TRẢ VỀ DUY NHẤT một JSON Array theo định dạng: [[\"câu hỏi 1\", \"câu trả lời 1\"], [...]]"
                     },
                     {
                         "role": "user",
@@ -524,18 +511,14 @@ class CustomQwenVLCaptionModel:
                     }
                 ]
                 
-                text = self.processor.apply_chat_template(
-                    messages,
-                    tokenize=False,
-                    add_generation_prompt=True
-                )
+                text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
                 all_messages.append(text)
             except Exception as e:
                 print(f"[-] Lỗi load ảnh {img_path}: {e}")
                 all_messages.append("") 
                 all_images.append(Image.new('RGB', (224, 224), color='white'))
 
-        # 2. Xử lý Tokenize và đưa lên GPU
+        # Xử lý Batch qua Processor
         inputs = self.processor(
             text=all_messages,
             images=all_images,
@@ -543,44 +526,33 @@ class CustomQwenVLCaptionModel:
             return_tensors="pt"
         ).to(self.device)
 
-        # 3. Cấu hình Generation (Dùng Greedy để đảm bảo tính nhất quán của JSON)
+        # Cấu hình generation
         gen_config = GenerationConfig(
-            max_new_tokens=max_new_tokens,
-            do_sample=do_sample,
-            temperature=0.2 if do_sample else None,
-            repetition_penalty=1.05, # Giảm nhẹ penalty để tránh làm hỏng cấu trúc JSON
+            max_new_tokens=1024,
+            do_sample=False,
+            repetition_penalty=1.05,
             pad_token_id=self.processor.tokenizer.pad_token_id or self.processor.tokenizer.eos_token_id,
         )
 
-        # 4. Model Inference
-        output_ids = self.model.generate(
-            **inputs,
-            generation_config=gen_config
-        )
+        # Inference
+        output_ids = self.model.generate(**inputs, generation_config=gen_config)
 
-        # 5. Decode
-        generated_ids = [
-            out[len(ins):] for ins, out in zip(inputs.input_ids, output_ids)
-        ]
-        
-        responses = self.processor.batch_decode(
-            generated_ids,
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=True
-        )
+        # Decode kết quả
+        generated_ids = [out[len(ins):] for ins, out in zip(inputs.input_ids, output_ids)]
+        responses = self.processor.batch_decode(generated_ids, skip_special_tokens=True)
 
-        # 6. Parse JSON Answers
-        batch_answers = []
+        # Parse JSON từng kết quả trong batch
+        final_batch_results = []
         for res_text in responses:
-            # Sử dụng hàm extract_json_array bạn đã viết
-            answers = self.extract_json_array(res_text)
-            
-            # Fallback nếu model trả về text thay vì JSON array
-            if not answers or not isinstance(answers, list):
-                # Tách theo dòng hoặc đánh số nếu model lỡ trả về list dạng text
-                lines = [line.strip("- 12345. ") for line in res_text.split('\n') if len(line.strip()) > 5]
-                batch_answers.append(lines)
-            else:
-                batch_answers.append(answers)
+            parsed = self.extract_json_array(res_text)
+            final_batch_results.append(parsed)
 
-        return batch_answers
+        return final_batch_results
+    
+def load_and_resize_image(path, max_size=384):
+    image = Image.open(path).convert("RGB")
+    
+    # Resize giữ aspect ratio
+    image.thumbnail((max_size, max_size))
+    
+    return image

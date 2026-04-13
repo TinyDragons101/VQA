@@ -1,12 +1,10 @@
 Bạn là một chuyên gia nghiên cứu văn hóa Việt Nam. Hãy trả lời danh sách câu hỏi VQA dựa trên hình ảnh và thông tin bài báo đi kèm.
 
-### Bối cảnh bài báo:
-- Tiêu đề: {{ title }}
-- Nội dung chính: {{ content }}
-
-### Dữ liệu hình ảnh:
-- Chú thích: {{ original_caption }}
-- Mô tả chi tiết: {{ generated_caption }}
+### DỮ LIỆU ĐẦU VÀO:
+- Tiêu đề bài báo: {{ title }}
+- Nội dung bài báo: {{ content }}
+- Chú thích gốc: {{ original_caption }}
+- Chú thích chi tiết: {{ generated_caption }}
 
 ### Danh sách câu hỏi cần trả lời:
 {% for q in questions %}
@@ -14,9 +12,8 @@ Bạn là một chuyên gia nghiên cứu văn hóa Việt Nam. Hãy trả lời
 {% endfor %}
 
 ### Yêu cầu bắt buộc:
-1. Trả lời dựa trên dữ liệu thực tế: Ưu tiên bài báo, sau đó là chi tiết trong ảnh, trả lời ngắn gọn, đúng, đủ.
-2. Nếu không có thông tin, hãy ghi "Thông tin không được đề cập".
-3. Ngôn ngữ: Thuật ngữ chuyên môn văn hóa Việt Nam, không dùng chữ Hán/tiếng Anh.
-4. Định dạng đầu ra: Trả về DUY NHẤT một JSON Array chứa các chuỗi văn bản câu trả lời theo đúng thứ tự câu hỏi.
-
-Ví dụ: ["Câu trả lời 1", "Câu trả lời 2", ...]
+1. **Lọc khắt khe**: CHỈ giữ lại những câu hỏi có câu trả lời rõ ràng trong dữ liệu đầu vào.
+2. **Loại bỏ hoàn toàn**: Nếu thông tin không xuất hiện trong bài báo hoặc hình ảnh, bạn phải LOẠI BỎ câu hỏi đó.
+3. **Độ chính xác**: Câu trả lời dựa 100% vào ngữ cảnh, không tự suy diễn.
+4. Ngôn ngữ: Thuật ngữ chuyên môn văn hóa Việt Nam, không dùng chữ Hán/tiếng Anh.
+5. TRẢ VỀ KẾT QUẢ DƯỚI DẠNG JSON ARRAY: [["câu hỏi 1", "câu trả lời 1"], ["câu hỏi 2", "câu trả lời 2"], ...]

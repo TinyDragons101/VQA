@@ -157,7 +157,9 @@ def process_pipeline(args):
         # Mở file .jsonl để append kết quả ngay lập tức (tránh mất data khi crash)
         with open(backup_path, "a", encoding="utf-8") as f_backup:
             for batch_data in dataloader:
-                if batch_data is None: continue
+                if batch_data is None: 
+                    print(" [!] Cảnh báo: Một batch bị skip hoàn toàn do lỗi dữ liệu.")
+                    continue
 
                 t0 = time.perf_counter()
                 
@@ -248,7 +250,7 @@ def main():
     parser.add_argument("--image_dir", type=str, default="../Eventa/webCrawl/src/database_image")
     parser.add_argument("--template_dir", type=str, default="./prompt_templates")
     parser.add_argument("--model_name", type=str, default="Qwen/Qwen3-VL-8B-Instruct")
-    parser.add_argument("--device", type=str, default="cuda:6")
+    parser.add_argument("--device", type=str, default="cuda:7")
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--num_workers", type=int, default=0)
 

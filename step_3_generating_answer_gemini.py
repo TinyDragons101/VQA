@@ -179,7 +179,7 @@ if __name__ == "__main__":
     
     parser.add_argument("--batch_size", type=int, default=5)
     parser.add_argument("--workers", type=int, default=5, help="Số luồng API chạy song song")
-    parser.add_argument("--limit", type=int, default=1000, help="Giới hạn số lượng ảnh cần process")
+    parser.add_argument("--limit", type=int, default=10000, help="Giới hạn số lượng ảnh cần process")
     
     args = parser.parse_args()
     process_answering_pipeline(args)
