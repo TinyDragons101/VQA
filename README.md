@@ -1,5 +1,4 @@
-The format of database.json:
-
+Format of database.json:
 {
   "article_id_using_16hex": // f8097c7d27a8aac6 {
     "url": "...",
@@ -20,36 +19,48 @@ The format of database.json:
 }
 
 
-The format of image_caption.json
-
+Format of image_caption.json
 {
-    "image_id": {
-        "article_id": ...,
-        "title": ...,
-        "url": ...,
-        "category": ...,
-        "original_caption": ...,
-        "generated_caption": ...
-    }
+  "image_id1": {
+    "article_id": ...,
+    "title": ...,
+    "category": ...,
+    "original_caption": ...,
+    "generated_caption": ...
+  },
+  "image_id2": {
+    ...
+  }
 }
 
 
-The format of image_vqa.json
+Format of image_questions.json
+{
+  "image_id1": [
+    "question1",
+    "question2",
+    ...
+  ],
+  "image_id2": [
+    "question3",
+    "questions4"
+  ],
+  ...
+}
+
+
+Format of image_vqa.json
 
 {
-    "image_id": [
-        {
-            "question": ...,
-            "answer": ...,
-            "explanation": ...,
-        },
-        {
-            "question": ...,
-            "answer": ..., 
-            "explanation": ...,
-        },
-        {
-            ...
-        }
-    ]
+  "image_id": [
+    [
+        "question1",
+        "answer1"
+    ],
+    [
+        "question2",
+        "answer2"
+    ],
+    ...
+  ]
 }

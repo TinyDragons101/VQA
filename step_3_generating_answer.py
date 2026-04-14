@@ -6,7 +6,8 @@ import torch
 from typing import List, Dict, Any
 from tqdm import tqdm
 from jinja2 import Environment, FileSystemLoader
-from internvl import CustomQwenVLCaptionModel
+# Giả sử file model của bạn được đặt tên như vậy
+from internvl import CustomQwenVLCaptionModel 
 
 def render_answer_prompt(template_dir, entry, article_content, questions):
     env = Environment(
@@ -14,10 +15,10 @@ def render_answer_prompt(template_dir, entry, article_content, questions):
         trim_blocks=True,
         lstrip_blocks=True
     )
-    # Sử dụng template gemini để đồng bộ format prompt
+    # Tên template có thể tùy chỉnh theo file của bạn (.j2)
     template = env.get_template("answer_generating.j2")
     
-    # Giới hạn nội dung bài báo để tránh tràn token
+    # Giới hạn nội dung bài báo để tránh tràn context window
     truncated_content = article_content[:5000] 
     
     return template.render(
@@ -38,7 +39,7 @@ def save_json(data, path):
     os.replace(temp_path, path)
 
 def find_image_path(image_dir, image_id):
-    # Thêm .webp và các format mở rộng như file Gemini
+    """Tìm đường dẫn ảnh với nhiều định dạng khác nhau"""
     for ext in ['.png', '.jpg', '.jpeg', '.JPG', '.PNG', '.webp']:
         path = os.path.join(image_dir, f"{image_id}{ext}")
         if os.path.exists(path):
@@ -59,20 +60,20 @@ def process_answering_pipeline(args):
     with open(args.vqa_json_path, "r", encoding="utf-8") as f:
         vqa_data = json.load(f)
 
-    # 2. Resume logic: Load output cũ (để không chạy lại những cái đã có kết quả)
+    # 2. Resume logic: Load kết quả đã có để tránh chạy lại
     output_data = {}
     if os.path.exists(args.output_json_path):
         try:
             with open(args.output_json_path, "r", encoding="utf-8") as f:
                 output_data = json.load(f)
             print(f"[*] Resuming: {len(output_data)} images already answered.")
-        except:
+        except Exception as e:
+            print(f"[!] Could not load existing JSON: {e}")
             output_data = {}
 
     # 3. Chuẩn bị Task
     all_tasks = []
     for image_id, questions in vqa_data.items():
-        # Nếu image_id đã có trong output_data và có nội dung, bỏ qua
         if image_id in output_data and output_data[image_id]:
             continue
 
@@ -80,8 +81,7 @@ def process_answering_pipeline(args):
         image_path = find_image_path(args.image_dir, image_id)
         
         if entry and image_path:
-            # Lấy list câu hỏi (chỉ lấy text nếu questions là list các dict)
-            # Tùy thuộc vào cấu trúc image_questions.json của bạn
+            # Xử lý nếu questions là list các dict hoặc list string
             qs_to_render = [q["question"] if isinstance(q, dict) else q for q in questions]
             
             article_id = entry.get("article_id", image_id) 
@@ -101,15 +101,17 @@ def process_answering_pipeline(args):
         print("[*] No new images/questions to process.")
         return
     
-    # Sắp xếp theo độ dài prompt để tối ưu xử lý (tương tự file Gemini)
+    # Sắp xếp để tối ưu hóa việc phân bổ bộ nhớ GPU (prompt ngắn trước hoặc dài trước)
     all_tasks.sort(key=lambda x: x['prompt_len'], reverse=args.reverse_sort)
     
     if args.limit and args.limit > 0:
         all_tasks = all_tasks[:args.limit]
         print(f"[*] Limit applied: Processing {len(all_tasks)} tasks.")
 
+    # Tạo đường dẫn file backup .jsonl
     backup_path = args.output_json_path.replace(".json", ".jsonl")
     print(f"[*] Total tasks to process: {len(all_tasks)}")
+    print(f"[*] Backup file: {backup_path}")
 
     # 4. Khởi tạo Model Local
     print(f"[*] Initializing model: {args.model_name} on {args.device}")
@@ -121,7 +123,7 @@ def process_answering_pipeline(args):
     pbar = tqdm(total=len(all_tasks), desc="Qwen Answering")
 
     try:
-        # Mở file backup .jsonl ở chế độ append
+        # Mở file backup .jsonl ở chế độ append ("a")
         with open(backup_path, "a", encoding="utf-8") as f_backup:
             for i in range(0, len(all_tasks), batch_size):
                 t0 = time.perf_counter()
@@ -134,8 +136,7 @@ def process_answering_pipeline(args):
                 t1 = time.perf_counter()
 
                 try:
-                    # Gọi inference của model local
-                    # Lưu ý: model local thường dùng batch_img_paths và batch_prompts trực tiếp
+                    # Inference
                     batch_results = model.generate_answers_batch(
                         image_paths=batch_img_paths, 
                         prompts=batch_prompts
@@ -146,50 +147,47 @@ def process_answering_pipeline(args):
                     for idx, result in enumerate(batch_results):
                         img_id = batch_ids[idx]
                         if result:
-                            # Lưu vào RAM
+                            # Lưu vào dictionary chính (RAM)
                             output_data[img_id] = result
                             updated_count += 1
                             
-                            # Ghi ngay vào file backup .jsonl
-                            line = json.dumps({img_id: result}, ensure_ascii=False)
-                            f_backup.write(line + "\n")
+                            # Ghi NGAY vào file backup .jsonl (mỗi dòng 1 JSON object)
+                            backup_entry = {img_id: result}
+                            f_backup.write(json.dumps(backup_entry, ensure_ascii=False) + "\n")
                     
+                    # Ép dữ liệu ghi xuống ổ cứng ngay lập tức
                     f_backup.flush()
                     t3 = time.perf_counter()
                     
-                    print(f"""
-                    ⏱️ Batch timing ({len(batch)} items):
-                    - Data Prep:    {t1 - t0:.3f}s
-                    - Inference:    {t2 - t1:.3f}s (Avg: {(t2-t1)/len(batch):.3f}s/img)
-                    - Save/Backup:  {t3 - t2:.3f}s
-                    - Total Batch:  {t3 - t0:.3f}s
-                    """)
+                    # In thông số thời gian để theo dõi hiệu năng
+                    if i % (batch_size * 2) == 0:
+                        print(f"\n⏱️ Batch {i//batch_size} Timing: Inference: {t2-t1:.2f}s | Avg: {(t2-t1)/len(batch):.2f}s/img")
 
-                    # Lưu file .json chính định kỳ mỗi 5 batch để an toàn
+                    # Lưu file .json chính định kỳ (ví dụ mỗi 5 batch)
                     if (i // batch_size) % 5 == 0:
                         save_json(output_data, args.output_json_path)
-                        # Dọn dẹp cache GPU cho model local
-                        torch.cuda.empty_cache()
+                        if "cuda" in args.device:
+                            torch.cuda.empty_cache()
 
                 except Exception as e:
-                    print(f"\n[!] Error at batch starting with {batch_ids[0]}: {e}")
+                    print(f"\n[!] Error in batch starting with {batch_ids[0]}: {e}")
                 
                 pbar.update(len(batch))
 
     except KeyboardInterrupt:
-        print("\n[!] User Interrupted (^C). Saving progress...")
+        print("\n[!] User Interrupted (^C). Saving current progress...")
     except Exception as e:
         print(f"\n[!] Unexpected error: {e}")
     finally:
-        # Final Save
+        # Lưu kết quả lần cuối vào file .json
         if updated_count > 0:
             save_json(output_data, args.output_json_path)
-            print(f"\n[*] Final save completed. Total entries: {len(output_data)}")
+            print(f"\n[*] Processed {updated_count} new entries. Total: {len(output_data)}")
         pbar.close()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    # Các đường dẫn mặc định giống file Gemini
+    # Paths
     parser.add_argument("--database_path", type=str, default="../Eventa/webCrawl/src/merged_database.json")
     parser.add_argument("--caption_json_path", type=str, default="./image_caption_updated.json")
     parser.add_argument("--vqa_json_path", type=str, default="./image_questions.json")
@@ -197,13 +195,12 @@ if __name__ == "__main__":
     parser.add_argument("--image_dir", type=str, default="../Eventa/webCrawl/src/database_image")
     parser.add_argument("--template_dir", type=str, default="./prompt_templates")
     
-    # Model local config
+    # Model config
     parser.add_argument("--model_name", type=str, default="Qwen/Qwen3-VL-8B-Instruct")
-    parser.add_argument("--device", type=str, default="cuda:7")
-    parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--limit", type=int, default=40000)
-    
-    parser.add_argument("--reverse_sort", action="store_true", help="Sắp xếp prompt_len giảm dần (mặc định là tăng dần)")
+    parser.add_argument("--device", type=str, default="cuda:0")
+    parser.add_argument("--batch_size", type=int, default=8)
+    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--reverse_sort", action="store_true", help="Sort prompts by length descending")
     
     args = parser.parse_args()
     process_answering_pipeline(args)

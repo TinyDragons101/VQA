@@ -1,19 +1,15 @@
-Bạn là một chuyên gia nghiên cứu văn hóa Việt Nam. Hãy trả lời danh sách câu hỏi VQA dựa trên hình ảnh và thông tin bài báo đi kèm.
+Bạn là một chuyên gia nghiên cứu văn hóa Việt Nam. Nhiệm vụ của bạn là phân tích dữ liệu đầu vào (văn bản và hình ảnh) để tự xây dựng một bộ câu hỏi và trả lời (VQA) nhằm làm rõ những thông tin quan trọng và đặc sắc nhất.
 
 ### DỮ LIỆU ĐẦU VÀO:
 - Tiêu đề bài báo: {{ title }}
 - Nội dung bài báo: {{ content }}
-- Chú thích gốc: {{ original_caption }}
-- Chú thích chi tiết: {{ generated_caption }}
+- Chú thích gốc (Original Caption): {{ original_caption }}
+- Chú thích chi tiết (Generated Caption): {{ generated_caption }}
 
-### Danh sách câu hỏi cần trả lời:
-{% for q in questions %}
-{{ loop.index }}. {{ q }}
-{% endfor %}
-
-### Yêu cầu bắt buộc:
-1. **Lọc khắt khe**: CHỈ giữ lại những câu hỏi có câu trả lời rõ ràng trong dữ liệu đầu vào.
-2. **Loại bỏ hoàn toàn**: Nếu thông tin không xuất hiện trong bài báo hoặc hình ảnh, bạn phải LOẠI BỎ câu hỏi đó.
-3. **Độ chính xác**: Câu trả lời dựa 100% vào ngữ cảnh, không tự suy diễn.
-4. Ngôn ngữ: Thuật ngữ chuyên môn văn hóa Việt Nam, không dùng chữ Hán/tiếng Anh.
-5. TRẢ VỀ KẾT QUẢ DƯỚI DẠNG JSON ARRAY: [["câu hỏi 1", "câu trả lời 1"], ["câu hỏi 2", "câu trả lời 2"], ...]
+### YÊU CẦU THỰC HIỆN:
+- Số lượng bắt buộc: Phải tạo ra CHÍNH XÁC 4 CẶP CÂU HỎI VÀ TRẢ LỜI CHO MỖI ẢNH. Khai thác tối đa thông tin về sự kiện, ý nghĩa, thời gian hoặc địa điểm dựa trên content và title.
+- Tự đặt câu hỏi: Hãy đặt các câu hỏi tập trung vào các khía cạnh: nhân vật, sự kiện, thời gian, địa điểm, các thực thể văn hóa, và các chi tiết trực quan xuất hiện trong hình ảnh/chú thích. Liên kết giữa hình ảnh và nội dung bài báo.
+- Tính xác thực: 100% thông tin trong câu trả lời phải được trích lục từ dữ liệu đầu vào. Tuyệt đối không tự suy diễn hoặc sử dụng kiến thức bên ngoài bài báo/hình ảnh.
+- Chất lượng câu hỏi: Ưu tiên những câu hỏi làm rõ mối quan hệ giữa nội dung bài báo và hình ảnh (Ví dụ: "Trong hình ảnh, nhân vật đang thực hiện nghi lễ gì được nhắc đến trong bài báo?").
+- Ngôn ngữ: Sử dụng thuật ngữ chuyên môn văn hóa Việt Nam thuần túy, diễn đạt trang trọng, chính xác. Không dùng chữ Hán hay tiếng Anh.
+- Định dạng đầu ra: Trả về kết quả duy nhất dưới dạng JSON ARRAY theo cấu trúc: [["Câu hỏi 1", "Câu trả lời 1"], ["Câu hỏi 2", "Câu trả lời 2"], ["Câu hỏi 3", "Câu trả lời 3"], ["Câu hỏi 4", "Câu trả lời 4"], ["Câu hỏi 5", "Câu trả lời 5"]]

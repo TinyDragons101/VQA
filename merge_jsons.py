@@ -1,11 +1,13 @@
 import json
 import os
 
+# Hàm này dùng để merge 2 file JSON (image_vqa.json và image_vqa_reverse.json) dựa trên danh sách image_id có trong target_ids_file
+
 # Cấu hình tên file
 target_ids_file = "image_caption_updated.json"
-file_input_1 = "image_questions.json"
-file_input_2 = "image_questions_old.json"
-output_combined = "combined_captions.json"
+file_input_1 = "image_vqa.json"
+file_input_2 = "image_vqa_reverse.json"
+output_combined = "combined_vqa.json"
 
 def merge_json_files():
     # 1. Lấy danh sách image_id mục tiêu từ image_caption_updated.json
