@@ -548,6 +548,72 @@ class CustomQwenVLCaptionModel:
             final_batch_results.append(parsed)
 
         return final_batch_results
+
+    @torch.no_grad()
+    def generate_difficulty_batch(self, image_paths, prompts):
+        """
+        Đánh giá độ khó của các cặp QA theo lô (Batch).
+        Trả về list các JSON array chứa mức độ khó ["1", "3", ...].
+        """
+        all_messages = []
+        all_images = []
+
+        for img_path, p in zip(image_paths, prompts):
+            try:
+                image = Image.open(img_path).convert("RGB")
+                all_images.append(image)
+                
+                messages = [
+                    {
+                        "role": "system",
+                        "content": "Bạn là chuyên gia đánh giá dữ liệu VQA. Hãy đánh giá độ khó của các cặp câu hỏi - câu trả lời dựa trên bài báo và hình ảnh. TRẢ VỀ DUY NHẤT một JSON Array chứa các mức độ khó từ \"1\" đến \"5\"."
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image"},
+                            {"type": "text", "text": p},
+                        ],
+                    }
+                ]
+                
+                text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                all_messages.append(text)
+            except Exception as e:
+                print(f"[-] Lỗi load ảnh {img_path}: {e}")
+                all_messages.append("") 
+                all_images.append(Image.new('RGB', (224, 224), color='white'))
+
+        # Xử lý Batch qua Processor
+        inputs = self.processor(
+            text=all_messages,
+            images=all_images,
+            padding=True,
+            return_tensors="pt"
+        ).to(self.device)
+
+        # Cấu hình generation
+        gen_config = GenerationConfig(
+            max_new_tokens=256,
+            do_sample=False,
+            repetition_penalty=1.05,
+            pad_token_id=self.processor.tokenizer.pad_token_id or self.processor.tokenizer.eos_token_id,
+        )
+
+        # Inference
+        output_ids = self.model.generate(**inputs, generation_config=gen_config)
+
+        # Decode kết quả
+        generated_ids = [out[len(ins):] for ins, out in zip(inputs.input_ids, output_ids)]
+        responses = self.processor.batch_decode(generated_ids, skip_special_tokens=True)
+
+        # Parse JSON từng kết quả trong batch
+        final_batch_results = []
+        for res_text in responses:
+            parsed = self.extract_json_array(res_text)
+            final_batch_results.append(parsed)
+
+        return final_batch_results
     
 def load_and_resize_image(path, max_size=384):
     image = Image.open(path).convert("RGB")

@@ -1,0 +1,27 @@
+Bạn là một chuyên gia đánh giá dữ liệu VQA (Visual Question Answering).
+Nhiệm vụ của bạn là đánh giá độ khó của các cặp Câu hỏi - Câu trả lời (QA) dựa trên **HÌNH ẢNH ĐI KÈM** và **NỘI DUNG BÀI BÁO**.
+
+### Dữ liệu đầu vào:
+1. **Hình ảnh:** (Đã được cung cấp cho hệ thống nhìn thấy)
+2. **Nội dung bài báo:** {{ content }}
+
+### Danh sách Câu hỏi - Câu trả lời cần đánh giá:
+{% for qa in qa_pairs %}
+{{ loop.index }}. Câu hỏi: {{ qa[0] }}
+   Câu trả lời: {{ qa[1] }}
+{% endfor %}
+
+### Tiêu chí đánh giá độ khó (Difficulty Level từ 1 đến 5):
+1. **Level "1" (Rất dễ):** Câu hỏi chỉ yêu cầu nhận diện các thực thể/màu sắc/số lượng hiển thị cực kỳ rõ ràng trong ảnh (Ví dụ: "Ảnh có mấy người?", "Cái áo màu gì?").
+2. **Level "2" (Dễ):** Nhận diện hành động hoặc vị trí tương đối. Đòi hỏi quan sát kỹ hơn nhưng chưa cần đọc văn bản bài báo.
+3. **Level "3" (Trung bình):** Cần kết hợp quan sát chi tiết trong ảnh và đối chiếu với các thông tin định danh trong bài báo (Ví dụ: Tên một loại nhạc cụ cụ thể, tên địa danh hiển thị trong ảnh).
+4. **Level "4" (Khó):** Đòi hỏi sự suy luận giữa hình ảnh và các dữ kiện nằm rải rác trong bài báo. Phải hiểu bối cảnh của sự kiện hoặc kiến trúc đang diễn ra.
+5. **Level "5" (Rất khó):** Giải thích ý nghĩa văn hóa, biểu tượng hoặc các chi tiết chuyên sâu mà nếu không đọc kỹ bài báo và quan sát cực chi tiết ảnh thì không thể trả lời được.
+
+### Quy tắc bắt buộc:
+- Quan sát kỹ ảnh để xem câu hỏi đó dễ hay khó để tìm ra câu trả lời trong ảnh.
+- Trả về DUY NHẤT một JSON Array chứa danh sách các mức độ khó dưới dạng chuỗi: "1", "2", "3", "4", "5".
+- Ví dụ: ["1", "4", "2", "3", "5"]
+- TUYỆT ĐỐI không giải thích gì thêm.
+
+Kết quả JSON:
