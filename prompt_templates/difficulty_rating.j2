@@ -1,27 +1,30 @@
 Bạn là một chuyên gia đánh giá dữ liệu VQA (Visual Question Answering).
-Nhiệm vụ của bạn là đánh giá độ khó của các cặp Câu hỏi - Câu trả lời (QA) dựa trên **HÌNH ẢNH ĐI KÈM** và **NỘI DUNG BÀI BÁO**.
+Nhiệm vụ của bạn là đánh giá độ khó của **{{ qa_pairs|length }}** cặp Câu hỏi - Câu trả lời (QA) dưới đây dựa trên hình ảnh và bài báo.      
 
 ### Dữ liệu đầu vào:
 1. **Hình ảnh:** (Đã được cung cấp cho hệ thống nhìn thấy)
 2. **Nội dung bài báo:** {{ content }}
 
-### Danh sách Câu hỏi - Câu trả lời cần đánh giá:
+### Danh sách {{ qa_pairs|length }} cặp Câu hỏi - Câu trả lời cần đánh giá:
 {% for qa in qa_pairs %}
 {{ loop.index }}. Câu hỏi: {{ qa[0] }}
    Câu trả lời: {{ qa[1] }}
 {% endfor %}
 
-### Tiêu chí đánh giá độ khó (Difficulty Level từ 1 đến 5):
-1. **Level "1" (Rất dễ):** Câu hỏi chỉ yêu cầu nhận diện các thực thể/màu sắc/số lượng hiển thị cực kỳ rõ ràng trong ảnh (Ví dụ: "Ảnh có mấy người?", "Cái áo màu gì?").
-2. **Level "2" (Dễ):** Nhận diện hành động hoặc vị trí tương đối. Đòi hỏi quan sát kỹ hơn nhưng chưa cần đọc văn bản bài báo.
-3. **Level "3" (Trung bình):** Cần kết hợp quan sát chi tiết trong ảnh và đối chiếu với các thông tin định danh trong bài báo (Ví dụ: Tên một loại nhạc cụ cụ thể, tên địa danh hiển thị trong ảnh).
-4. **Level "4" (Khó):** Đòi hỏi sự suy luận giữa hình ảnh và các dữ kiện nằm rải rác trong bài báo. Phải hiểu bối cảnh của sự kiện hoặc kiến trúc đang diễn ra.
-5. **Level "5" (Rất khó):** Giải thích ý nghĩa văn hóa, biểu tượng hoặc các chi tiết chuyên sâu mà nếu không đọc kỹ bài báo và quan sát cực chi tiết ảnh thì không thể trả lời được.
+### Tiêu chí đánh giá độ khó (Difficulty Level từ 1 đến 6):
+1. **Level "1" (Visual Basic):** Chỉ cần quan sát ảnh. Trả lời về thực thể, màu sắc, số lượng cơ bản (Ví dụ: "Có mấy cái ghế?", "Cái áo màu gì?").
+2. **Level "2" (Visual Relation):** Chỉ cần quan sát ảnh. Hiểu về hành động hoặc vị trí tương đối của các vật thể (Ví dụ: "Người đàn ông đang nhìn đi đâu?", "Vật thể nằm bên trái hay bên phải?").
+3. **Level "3" (Text-Image Mapping):** Cần đối chiếu ảnh với từ khóa xuất hiện trực tiếp trong bài báo để định danh (Ví dụ: "Vị đại biểu đang phát biểu tên là gì?", "Tên của tòa nhà trong ảnh là gì?").
+4. **Level "4" (Attribute Attribution):** Đòi hỏi dùng thông tin chi tiết trong bài báo để giải thích các thuộc tính cụ thể hiển thị trên ảnh (Ví dụ: "Mẫu xe này thuộc phiên bản năm bao nhiêu theo bài báo?", "Chất liệu của tác phẩm nghệ thuật này là gì?").
+5. **Level "5" (Contextual Logic):** Phải hiểu logic và bối cảnh của bài báo để giải thích "Tại sao" hoặc "Như thế nào" về trạng thái trong ảnh. Thông tin thường nằm rải rác ở nhiều câu (Ví dụ: "Tại sao đám đông trong ảnh lại tụ tập ở địa điểm này?", "Sự kiện trong ảnh có mục đích gì dựa trên nội dung bài báo?").
+6. **Level "6" (Global Synthesis):** Đòi hỏi mức độ suy luận cao nhất. Kết hợp hình ảnh và toàn bộ nội dung bài báo để đưa ra nhận định về ý nghĩa, tầm ảnh hưởng, hoặc các chi tiết cực kỳ chuyên sâu (Ví dụ: "Bức ảnh này phản ánh điều gì về tình hình kinh tế được nêu trong bài?", "Phản ứng của nhân vật cho thấy kết quả gì của cuộc đàm phán?").
 
 ### Quy tắc bắt buộc:
 - Quan sát kỹ ảnh để xem câu hỏi đó dễ hay khó để tìm ra câu trả lời trong ảnh.
-- Trả về DUY NHẤT một JSON Array chứa danh sách các mức độ khó dưới dạng chuỗi: "1", "2", "3", "4", "5".
-- Ví dụ: ["1", "4", "2", "3", "5"]
+- Bạn phải trả về một JSON Array chứa **ĐÚNG {{ qa_pairs|length }}** phần tử. Mỗi phần tử là một chuỗi số từ "1" đến "6". Thứ tự phải khớp hoàn toàn với danh sách câu hỏi ở trên.
+- **TUYỆT ĐỐI** không trả về thừa hoặc thiếu nhãn. Nếu có {{ qa_pairs|length }} câu hỏi, phải có {{ qa_pairs|length }} nhãn
+- Trả về DUY NHẤT một JSON Array chứa danh sách các mức độ khó dưới dạng chuỗi: "1", "2", "3", "4", "5", "6".
+- Ví dụ: ["1", "4", "2", ...]
 - TUYỆT ĐỐI không giải thích gì thêm.
 
-Kết quả JSON:
+Kết quả JSON (Ví dụ nếu có 3 câu: ["1", "6", "4"])

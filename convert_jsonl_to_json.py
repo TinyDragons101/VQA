@@ -1,9 +1,9 @@
 import json
 import os
 
-json_path = "image_caption.json"
-jsonl_path = "image_caption.jsonl"
-output_path = "image_caption_updated.json"
+json_path = "image_vqa_with_difficulty.json"
+jsonl_path = "image_vqa_with_difficulty.jsonl"
+output_path = "image_vqa_with_difficulty_updated.json"
 
 # 1. Load file JSON gốc để lấy danh sách image_id đã có
 existing_data = {}

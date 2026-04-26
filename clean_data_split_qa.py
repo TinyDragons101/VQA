@@ -67,7 +67,7 @@ if __name__ == "__main__":
     # Đường dẫn các file đầu vào của bạn
     INPUT_VQA = 'image_vqa.json'
     INPUT_CAPTION = 'image_caption_updated.json'
-    INPUT_DB = "../Eventa/webCrawl/src/merged_2_database.json"
+    INPUT_DB = "../Eventa/webCrawl/src/merged_7_database.json"
     OUTPUT_FOLDER = 'image_vqa_folder'
     
     split_and_combine_vqa(INPUT_VQA, INPUT_CAPTION, INPUT_DB, OUTPUT_FOLDER)

@@ -148,3 +148,24 @@ Format of image_vqa_with_difficult.json
     ...
   ]
 }
+
+Format of image_vqa_with_difficulty_cleaned_test.json
+{
+  "image_id": {
+    "article_id": ...,
+    "article_url": ...
+    "qa": [
+      [
+        "question1",
+        "answer1",
+        "3"
+      ],
+      [
+        "question2",
+        "answer2",
+        "4"
+      ],
+      ...
+    ]
+  }
+}

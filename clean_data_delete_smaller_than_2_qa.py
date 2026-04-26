@@ -23,14 +23,14 @@ def filter_vqa_data(input_file, output_file):
         
         # ĐIỀU KIỆN 1: Kiểm tra xem có cặp QA nào chỉ có 1 phần tử không
         # (Cấu trúc đúng phải là [Q, A] - tức 2 phần tử)
-        has_invalid_pair = any(len(pair) < 2 for pair in qa_list)
+        has_invalid_pair = any(len(pair) != 2 for pair in qa_list)
         
         if has_invalid_pair:
             stats["removed_single_element"] += 1
             continue
             
         # ĐIỀU KIỆN 2: Chỉ giữ lại những image_id có từ 3 cặp QA trở lên
-        if len(qa_list) <= 3:
+        if len(qa_list) < 3:
             stats["removed_low_qa_count"] += 1
             continue
 
@@ -44,7 +44,7 @@ def filter_vqa_data(input_file, output_file):
 
     print(f"--- BÁO CÁO LỌC DỮ LIỆU ---")
     print(f"1. Số ảnh bị xóa do QA thiếu cặp (chỉ có 1 phần tử): {stats['removed_single_element']}")
-    print(f"2. Số ảnh bị xóa do có quá ít QA (<= 2 cặp): {stats['removed_low_qa_count']}")
+    print(f"2. Số ảnh bị xóa do có quá ít QA (< 3 cặp): {stats['removed_low_qa_count']}")
     print(f"3. Số ảnh đạt tiêu chuẩn giữ lại: {stats['kept']}")
     print(f"--- Đã lưu file sạch tại: {output_file} ---")
 
